@@ -3,7 +3,7 @@
 Where we are (26 Oct 2026, ~19:00 SAST, day 1 of the hackathon):
 
 - Idea locked in: photo to real place (see PLAN.md). The user's idea.
-- Repo: `D:\Hackathon\placelens`, local git, nothing committed, **not public yet**. Name is provisional.
+- Repo: `D:\Hackathon\placelens`, public on GitHub (github.com/inlighten420/placelens), MIT licence. Name is provisional.
 - No code yet. No Meta API calls yet: the $150 credits weren't on Billing (card is on the account: calls before the
   credits land get charged).
 
