@@ -14,6 +14,7 @@ from .render import draw_map
 from .view import LocalFrame, find_candidates
 
 EXIT_MISSING = 2  # the photo lacks GPS or compass; pass them by hand
+ATTRIBUTION = "Building data © OpenStreetMap contributors, ODbL (openstreetmap.org/copyright)"
 
 
 def _fail(msg: str, as_json: bool, code: int = 1):
@@ -95,6 +96,7 @@ def cmd_find(args) -> None:
             "buildings_nearby": len(buildings),
             "candidates": rows,
             "map": str(map_path) if map_path else None,
+            "attribution": ATTRIBUTION,
         }))
         return
 
@@ -103,7 +105,8 @@ def cmd_find(args) -> None:
         print("No mapped buildings in view. (Overture fallback and estimated footprints are coming.)")
     for r in rows:
         label = r["name"] or r["osm_id"]
-        print(f"  {r['rank']}. {label:<32} {r['view_share']:>5.0%} of view, {r['distance_m']:>5.1f} m away  {r['osm_url']}")
+        share, dist = r["view_share"], r["distance_m"]
+        print(f"  {r['rank']}. {label:<32} {share:>5.0%} of view, {dist:>5.1f} m away  {r['osm_url']}")
     if map_path:
         print(f"map: {map_path}")
 

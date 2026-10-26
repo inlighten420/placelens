@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "placelens"
 version = "0.1.0"
 description = "Photo of a real place in, the real building on the real map out."
-readme = "PLAN.md"
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,15 +15,23 @@ dependencies = [
     "requests>=2.31",
     "shapely>=2.0",
     "matplotlib>=3.8",
+    "numpy>=1.26",
     "openai>=1.60",
     "meta-sam-parser>=0.1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 placelens = "placelens.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 120
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
