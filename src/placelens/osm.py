@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
 
-# Public Overpass servers are often busy; try each in turn.
+# Public Overpass servers are often busy: retry the main one, then try the mirrors.
 OVERPASS_URLS = [
     "https://overpass-api.de/api/interpreter",
-    "https://overpass-api.de/api/interpreter",  # its 502s are usually momentary
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 ]
+RETRIES = 2  # per server; its 502s and 429s are usually momentary
 USER_AGENT = "placelens/0.1 (github.com/inlighten420/placelens)"
 CACHE_DIR = Path("cache")
 
@@ -57,12 +58,15 @@ def parse(data: dict) -> list[Building]:
 def _overpass(query: str) -> dict:
     errors = []
     for url in OVERPASS_URLS:
-        try:
-            resp = requests.post(url, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=120)
-            resp.raise_for_status()
-            return resp.json()
-        except (requests.RequestException, ValueError) as e:
-            errors.append(f"{url.split('/')[2]}: {e}")
+        for attempt in range(RETRIES):
+            try:
+                resp = requests.post(url, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=120)
+                resp.raise_for_status()
+                return resp.json()
+            except (requests.RequestException, ValueError) as e:
+                errors.append(f"{url.split('/')[2]}: {e}")
+                if attempt + 1 < RETRIES:
+                    time.sleep(2 * (attempt + 1))
     raise RuntimeError("all Overpass servers failed: " + "; ".join(errors))
 
 
