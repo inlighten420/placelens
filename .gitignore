@@ -1,0 +1,13 @@
+# Private test photos and places (e.g. your own home): never in the public repo
+private/
+
+# Keys
+.env
+*.key
+
+# Outputs and caches
+out/
+cache/
+__pycache__/
+*.pyc
+node_modules/
