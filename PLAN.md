@@ -98,4 +98,4 @@ credits.json     every photo's source and licence
 - Name (placelens for now).
 - Demo place: Beacon Isle (only 2 Commons photos: own photos better) or a well-photographed Cape Town landmark.
 - SAM 3D Objects: not on the hackathon's model list (open weights listed: Muse Glimmer, Muse Spark Open). Ask @CV.
-- Muse Wonder on pay-as-you-go credits? ("Muse Wonder Full" may be subscription-only.) If not, Muse Spark picks.
+- Muse Wonder vs Muse Spark for the pick: Wonder works on pay-as-you-go but took 53 s / $0.09 a photo. Compare.
