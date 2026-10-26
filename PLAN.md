@@ -21,6 +21,16 @@ it at its real spot, real size, on the real map. Grey boxes become the real stre
 Not just for games: a cheap digital twin from phone photos. Mapping the unmapped, emergency services, disasters,
 accessibility, training worlds for self-driving cars on African roads, town planning, heritage.
 
+## Why this wins (judging: impact, use of Meta AI, technical depth, demo quality, equal weight)
+
+- Impact: a cheap digital twin from phone photos; maps what Google's 3D tiles miss (much of Africa), open-licensed.
+- Meta AI: SAM 3.1 (cut-out), Muse Wonder or Muse Spark (pick the building, count floors), Muse Image (clean-up),
+  Muse Spark Open (open weights, via Baseten `meta-models/muse-spark-open-1026`).
+- Not a "simple image analyzer": it builds 3D places, it doesn't just describe photos.
+- Bonus prizes to aim for: Best Agentic Use-Case (an agent runs the CLI over a folder of street photos and only asks
+  when unsure), Best Open Weight (building picker on Muse Spark Open), Most Viral (before/after clip on X),
+  Best Creative.
+
 ## How it works
 
 1. **Read the photo**: GPS (where you stood), compass (which way you faced), focal length (how wide you saw).
@@ -87,4 +97,5 @@ credits.json     every photo's source and licence
 
 - Name (placelens for now).
 - Demo place: Beacon Isle (only 2 Commons photos: own photos better) or a well-photographed Cape Town landmark.
-- SAM 3D Objects: counts as Meta open-weight? Ask @CV. Would run on Modal credits.
+- SAM 3D Objects: not on the hackathon's model list (open weights listed: Muse Glimmer, Muse Spark Open). Ask @CV.
+- Muse Wonder on pay-as-you-go credits? ("Muse Wonder Full" may be subscription-only.) If not, Muse Spark picks.

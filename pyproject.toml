@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "placelens"
+version = "0.1.0"
+description = "Photo of a real place in, the real building on the real map out."
+readme = "PLAN.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "pillow>=10",
+    "pillow-heif>=0.16",
+    "requests>=2.31",
+    "shapely>=2.0",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+placelens = "placelens.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
