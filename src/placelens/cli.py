@@ -45,7 +45,8 @@ def cmd_info(args) -> None:
     print(f"lens:     {cam.fov:.0f}° across ({cam.fov_source})")
 
 
-def cmd_find(args) -> None:
+def _locate(args):
+    """GPS, compass and lens (photo or flags), the buildings around, and the ones in view."""
     cam = read_camera(args.photo)
     lat = args.lat if args.lat is not None else cam.lat
     lon = args.lon if args.lon is not None else cam.lon
@@ -63,6 +64,27 @@ def cmd_find(args) -> None:
 
     frame = LocalFrame(lat, lon)
     candidates = find_candidates(buildings, frame, heading, fov, reach=args.radius, margin=args.margin)
+    return cam, frame, buildings, candidates, heading, fov
+
+
+def _row(c, frame) -> dict:
+    centre = c.polygon.centroid
+    t = c.building.tags
+    return {
+        "rank": c.rank,
+        "osm_id": c.building.osm_id,
+        "osm_url": c.building.url,
+        "name": t.get("name"),
+        "levels": t.get("building:levels"),
+        "height": t.get("height"),
+        "view_share": round(c.share, 3),
+        "distance_m": round(c.distance, 1),
+        "centre": [round(v, 6) for v in frame.to_latlon(centre.x, centre.y)],
+    }
+
+
+def cmd_find(args) -> None:
+    cam, frame, buildings, candidates, heading, fov = _locate(args)
 
     map_path = None
     if not args.no_map:
@@ -74,21 +96,7 @@ def cmd_find(args) -> None:
             polys, candidates, heading, fov, args.radius, args.margin, args.top,
         )
 
-    rows = []
-    for c in candidates[: args.top]:
-        centre = c.polygon.centroid
-        t = c.building.tags
-        rows.append({
-            "rank": c.rank,
-            "osm_id": c.building.osm_id,
-            "osm_url": c.building.url,
-            "name": t.get("name"),
-            "levels": t.get("building:levels"),
-            "height": t.get("height"),
-            "view_share": round(c.share, 3),
-            "distance_m": round(c.distance, 1),
-            "centre": [round(v, 6) for v in frame.to_latlon(centre.x, centre.y)],
-        })
+    rows = [_row(c, frame) for c in candidates[: args.top]]
 
     if args.json:
         print(json.dumps({
@@ -111,6 +119,113 @@ def cmd_find(args) -> None:
         print(f"map: {map_path}")
 
 
+def cmd_pick(args) -> None:
+    import hashlib
+
+    from PIL import Image
+
+    from .meta import SPARK, WONDER, MetaClient, MissingKeyError, parse_segments
+    from .pick import build_prompt, decide, line_up, parse_verdict, photo_span, prepare_photo
+    from .render import draw_check
+
+    cam, frame, buildings, candidates, heading, fov = _locate(args)
+    candidates = candidates[: args.top]
+    if not candidates:
+        _fail("no mapped buildings in view; check the compass with `placelens find` or widen --margin", args.json)
+    try:
+        meta = MetaClient()
+    except MissingKeyError as e:
+        _fail(str(e), args.json)
+
+    # Replies are saved next to the outputs, so re-running costs nothing unless --fresh.
+    out = Path(args.out) / "pick"
+    stem = Path(args.photo).stem
+    small = prepare_photo(args.photo, out / f"{stem}.jpg")
+    width = Image.open(small).width
+
+    sam_file = out / f"{stem}_sam.txt"
+    if sam_file.exists() and not args.fresh:
+        segments = parse_segments(sam_file.read_text(encoding="utf-8"))
+    else:
+        segments, raw = meta.segment(small, "building")
+        sam_file.write_text(raw, encoding="utf-8")
+    main = segments[0] if segments else None  # biggest: the building the photo is of
+    span = photo_span(main.box, width, fov) if main else None
+
+    model = WONDER if args.model == "wonder" else SPARK
+    prompt = build_prompt(candidates)
+    muse_file = out / f"{stem}_{args.model}_{hashlib.sha1(prompt.encode()).hexdigest()[:8]}.txt"
+    if muse_file.exists() and not args.fresh:
+        answer = muse_file.read_text(encoding="utf-8")
+    else:
+        answer = meta.ask(prompt, small, model=model)
+        muse_file.write_text(answer, encoding="utf-8")
+    verdict = parse_verdict(answer)
+    distance = float(verdict.distance_m) if isinstance(verdict.distance_m, (int, float)) else None
+    lineups = line_up(candidates, span, heading, fov, args.margin, args.move, distance) if span else []
+    decision = decide(lineups, verdict)
+
+    by_rank = {c.rank: c for c in candidates}
+    chosen = by_rank.get(decision.rank)
+    fix = next((lu for lu in lineups if lu.candidate is chosen), None)
+    check_path = draw_check(out / f"{stem}_check.jpg", small, main, fix.span if fix else None, fov)
+    map_path = None
+    if not args.no_map:
+        from shapely.geometry import Polygon
+
+        polys = [Polygon([frame.to_xy(*p) for p in b.outline]) for b in buildings]
+        corrected = (*fix.move, heading + fix.shift) if fix else None
+        zoom = min(args.radius, max(40, 2 * chosen.distance)) if chosen else None
+        map_path = draw_map(
+            out / f"{stem}_map.png", polys, candidates, heading, fov, args.radius, args.margin, args.top,
+            corrected=corrected, zoom=zoom,
+        )
+
+    result = {
+        "status": decision.status,
+        "why": decision.why,
+        "building": _row(chosen, frame) if chosen else None,
+        "muse": {"model": model, **vars(verdict)},
+        "geometry": {
+            "photo_span": [round(v, 1) for v in span] if span else None,
+            "line_up": [{"rank": lu.candidate.rank, "fit": round(lu.fit, 3), "score": round(lu.score, 3),
+                         "compass_off": lu.shift, "gps_off_m": [*lu.move]}
+                        for lu in lineups],
+        },
+        "candidates": [_row(c, frame) for c in candidates],
+        "check": str(check_path),
+        "map": str(map_path) if map_path else None,
+        "cost_usd": round(meta.spent, 4),
+        "attribution": ATTRIBUTION,
+    }
+    if args.json:
+        print(json.dumps(result))
+        return
+
+    if span:
+        print(f"SAM:      building spans {span[0]:+.0f}° to {span[1]:+.0f}° across the photo")
+    else:
+        print("SAM:      no building outlined")
+    for lu in lineups[:3]:
+        fix_note = f"if GPS {lu.moved:.0f} m off, compass {lu.shift:+.0f}°"
+        print(f"line-up:  {lu.candidate.rank}. {lu.candidate.building.osm_id:<22} "
+              f"score {lu.score:>4.0%}  (fits {lu.fit:.0%} {fix_note})")
+    choice = verdict.choice if verdict.choice is not None else "none"
+    print(f"Muse:     picks {choice}, {verdict.confidence:.0%} sure ({model})")
+    for r in verdict.reasons:
+        print(f"          - {r}")
+    if decision.status == "picked":
+        print(f"PICKED    {chosen.rank}. {chosen.building.osm_id}  {chosen.building.url}")
+        print(f"          {decision.why}")
+    else:
+        guess = f" Best guess: {decision.rank}." if decision.rank else ""
+        print(f"ASK       not sure: {decision.why}.{guess} Which numbered building is it? (see the map)")
+    print(f"check:    {check_path}")
+    if map_path:
+        print(f"map:      {map_path}")
+    print(f"cost:     ~${meta.spent:.4f} (0 if replies were reused)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="placelens",
@@ -125,19 +240,26 @@ def build_parser() -> argparse.ArgumentParser:
     info.set_defaults(func=cmd_info)
 
     find = sub.add_parser("find", help="which mapped buildings the photo is looking at")
-    find.add_argument("photo")
-    find.add_argument("--lat", type=float, help="override the photo's latitude")
-    find.add_argument("--lon", type=float, help="override the photo's longitude")
-    find.add_argument("--heading", type=float, help="override the compass direction (0 = north, 90 = east)")
-    find.add_argument("--fov", type=float, help="override the lens width in degrees")
-    find.add_argument("--radius", type=int, default=200, help="how far to look, metres (default 200)")
-    find.add_argument("--margin", type=float, default=15, help="compass error allowance, degrees (default 15)")
-    find.add_argument("--top", type=int, default=5, help="how many candidates to list (default 5)")
-    find.add_argument("--out", default="out", help="folder for the map picture (default out/)")
-    find.add_argument("--no-map", action="store_true", help="skip the map picture")
-    find.add_argument("--no-cache", action="store_true", help="always fetch fresh OpenStreetMap data")
-    find.add_argument("--json", action="store_true", help="machine-readable output")
+    pick = sub.add_parser("pick", help="which one it is: SAM 3.1 outline + Muse, checked against each other")
+    for cmd in (find, pick):
+        cmd.add_argument("photo")
+        cmd.add_argument("--lat", type=float, help="override the photo's latitude")
+        cmd.add_argument("--lon", type=float, help="override the photo's longitude")
+        cmd.add_argument("--heading", type=float, help="override the compass direction (0 = north, 90 = east)")
+        cmd.add_argument("--fov", type=float, help="override the lens width in degrees")
+        cmd.add_argument("--radius", type=int, default=200, help="how far to look, metres (default 200)")
+        cmd.add_argument("--margin", type=float, default=15, help="compass error allowance, degrees (default 15)")
+        cmd.add_argument("--top", type=int, default=5, help="how many candidates to consider (default 5)")
+        cmd.add_argument("--out", default="out", help="folder for pictures (default out/)")
+        cmd.add_argument("--no-map", action="store_true", help="skip the map picture")
+        cmd.add_argument("--no-cache", action="store_true", help="always fetch fresh OpenStreetMap data")
+        cmd.add_argument("--json", action="store_true", help="machine-readable output")
     find.set_defaults(func=cmd_find)
+    pick.add_argument("--model", choices=["spark", "wonder"], default="spark",
+                      help="Muse Spark (fast, cheap) or Muse Wonder (slower, deeper)")
+    pick.add_argument("--move", type=float, default=10, help="GPS error allowance, metres (default 10)")
+    pick.add_argument("--fresh", action="store_true", help="call the API again instead of reusing saved replies")
+    pick.set_defaults(func=cmd_pick)
     return p
 
 
