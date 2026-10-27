@@ -37,6 +37,8 @@ class Candidate:
     polygon: Polygon  # local metres
     share: float  # weighted share of the view's rays, 0..1
     distance: float  # metres to the nearest visible wall
+    left: float = 0.0  # visible edges, degrees from the heading (negative = left of centre)
+    right: float = 0.0
     rank: int = 0
 
 
@@ -97,11 +99,12 @@ def find_candidates(
                     nearest = (d, b, p)
         if nearest:
             d, b, p = nearest
-            entry = hits.setdefault(b.osm_id, [b, p, 0.0, d])
+            entry = hits.setdefault(b.osm_id, [b, p, 0.0, d, offset, offset])
             entry[2] += weight
             entry[3] = min(entry[3], d)
+            entry[5] = offset
 
-    candidates = [Candidate(b, p, w / total, d) for b, p, w, d in hits.values()]
+    candidates = [Candidate(b, p, w / total, d, lo, hi) for b, p, w, d, lo, hi in hits.values()]
     candidates.sort(key=lambda c: (-c.share, c.distance))
     for i, c in enumerate(candidates, 1):
         c.rank = i

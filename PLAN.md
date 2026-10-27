@@ -47,7 +47,10 @@ accessibility, training worlds for self-driving cars on African roads, town plan
 7. **Clean**: Muse Image takes out cars, people and trees in front.
 8. **Build**: the footprint raised to its height, the real front on its wall.
 9. (Stretch) **Lock the angle**: the building's corners in the photo matched to the footprint's, for the camera's
-   exact spot.
+   exact spot. (Partly done in `pick`: the outline's edges plus Muse's distance correct the GPS and compass.)
+10. (Stretch, after the place pipeline works) **`placelens item`**: photograph any object (a chair, a bin, a car)
+   and get a game-ready .glb, no building or map needed. Same cut-out, then image to 3D. For filling a game with
+   things as easily as places.
 
 ## Output: a place pack (standard files, any engine)
 
