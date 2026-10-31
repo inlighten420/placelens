@@ -251,3 +251,21 @@ Sat 31 Oct: making things from inside the game, with notes.
   placelens.cfg (repo + .venv python). Installed in D:\GeodriveBaseline; headless run loads clean.
 - Not yet tried by hand in the game window (panel layout, native picker, the pause). New photos need SAM 3.1
   (paid Meta API): with the box unticked only photos with saved SAM answers work.
+
+Sat 31 Oct, evening: first hand test of the F7 panel (in D:\GeodriveBaseline).
+
+- Committed and pushed all work to 33309b7.
+- Panel opens, pauses the game, native picker works, 9 HEIC teddy photos listed, notes box fine.
+- Bug: the "Put objects" row. `_wrapped("Put objects")` sits in an HBoxContainer with no minimum width, so it wraps
+  one letter per line and stretches the OptionButton tall. Fix: plain Label (no autowrap) and
+  `_where.size_flags_horizontal = Control.SIZE_EXPAND_FILL`.
+- Add a "What is it?" choice: let the AI decide / a building / an object (prop), passed to survey (as a note or flag).
+- Wrong game copy: the adapter is in D:\GeodriveBaseline (scripts from 19 Oct). The user's latest Open-Planet (with
+  teleport etc.; exported builds in D:\GeodriveBuild from 22-23 Oct) lives elsewhere. Ask the user for that project
+  folder and run `adapters/godot/install.py` there.
+- Default "allow paid Meta calls" to unticked.
+- Progress feels dead: the top line says "PlaceLens is busy" with no bar. Show activity: a progress bar (steps done /
+  expected), the current step in words ("cutting out the bear in photo 3 of 9"), elapsed time, a spinner.
+- Show the cost when a make finishes (user, 31 Oct): paid Meta US$ (MetaClient.spent already tallies it per command;
+  survey should sum its children's) plus Spark Open calls/tokens on the free Baseten credits, in the panel's summary.
+  Paid Meta calls aren't logged to a file yet (only open_usage.jsonl for Spark Open): add one, so costs can be totalled.

@@ -19,6 +19,8 @@ dependencies = [
     "openai>=1.60",
     "meta-sam-parser>=0.1",
     "scikit-image>=0.24",
+    "scipy>=1.11",
+    "opencv-python-headless>=4.9",
 ]
 
 [project.optional-dependencies]
