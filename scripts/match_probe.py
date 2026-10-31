@@ -124,7 +124,7 @@ def main() -> None:
         print(f"{a['name']}-{b['name']}  {len(pa):7d}  {r['inliers']:7d}  yaw {r['yaw']:+6.1f} pitch {r['pitch']:+5.1f}"
               f"  {compass:+7.1f}  {diff:+6.1f}" if compass is not None else "")
         results.append((r["inliers"], a, b, pa, pb, r))
-    for k, (_, a, b, pa, pb, r) in enumerate(sorted(results, key=lambda x: -x[0])[:3]):
+    for _, a, b, pa, pb, r in sorted(results, key=lambda x: -x[0])[:3]:
         ka = [cv2.KeyPoint(float(x), float(y), 4) for x, y in pa[r["mask"]]]
         kb = [cv2.KeyPoint(float(x), float(y), 4) for x, y in pb[r["mask"]]]
         ms = [cv2.DMatch(i, i, 0) for i in range(len(ka))]
