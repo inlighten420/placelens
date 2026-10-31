@@ -65,3 +65,40 @@ def test_info_json(street, capsys):
     code, out = run(capsys, "info", str(photo), "--json")
     info = json.loads(out)
     assert code == 0 and info["has_gps"] and info["heading"] == 90
+
+
+def test_build_skips_photos_it_cant_use_and_says_why(street, capsys):
+    one = make_photo(street / "a.jpg")  # no compass
+    two = make_photo(street / "b.jpg")
+    code, out = run(capsys, "build", str(one), str(two), "--json")
+    assert code == 3
+    error = json.loads(out)["error"]
+    assert "a.jpg" in error and "b.jpg" in error and "compass" in error
+
+
+def test_build_one_photo_fails_like_find(street, capsys):
+    code, out = run(capsys, "build", str(make_photo(street / "a.jpg")), "--json")
+    assert code == 2 and "--heading" in json.loads(out)["error"]
+
+
+def test_majority_floor_count():
+    from placelens.cli import _majority
+
+    assert _majority([2, 1, 2]) == 2
+    assert _majority([1, 2]) == 2  # a tie goes to the taller
+    assert _majority([None, "two", 0]) is None
+
+
+def test_sides_are_named_from_the_front():
+    from shapely.geometry import Polygon
+
+    from placelens.build import wall_edges
+    from placelens.cli import _front_bearing, _side_walls
+
+    box = Polygon([(0, 0), (10, 0), (10, 6), (0, 6)])  # front on the south side
+    used = [{"ctx": {"heading": 350}}, {"ctx": {"heading": 10}}]  # photos taken looking north, at the front
+    front = _front_bearing(used)
+    assert min(front, 360 - front) > 175  # faces south
+    facing = {side: [wall_edges(box)[w] for w in _side_walls(box, side, front)] for side in ("back", "left")}
+    assert facing["back"] == [((10.0, 6.0), (0.0, 6.0))]  # the north wall
+    assert facing["left"] == [((0.0, 6.0), (0.0, 0.0))]  # facing the front from the street, the west wall

@@ -18,6 +18,7 @@ dependencies = [
     "numpy>=1.26",
     "openai>=1.60",
     "meta-sam-parser>=0.1",
+    "scikit-image>=0.24",
 ]
 
 [project.optional-dependencies]
