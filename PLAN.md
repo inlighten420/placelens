@@ -16,7 +16,7 @@ it at its real spot, real size, on the real map. Grey boxes become the real stre
 | Where, shape, size | OpenStreetMap footprint |
 | Height, floors | Muse Wonder counting floors in the photo |
 | How it looks | The photo: cut out by SAM 3.1, straightened, cleaned by Muse Image |
-| Free-standing things (trees, kiosks, statues) | Image to 3D (SAM 3D Objects, if it counts as a Meta open-weight model; ask @CV) |
+| Free-standing things (trees, kiosks, statues) | SAM 3.1 cut-out, Muse for real size, Muse Image for the sides it can't see |
 
 Not just for games: a cheap digital twin from phone photos. Mapping the unmapped, emergency services, disasters,
 accessibility, training worlds for self-driving cars on African roads, town planning, heritage.
@@ -100,5 +100,7 @@ credits.json     every photo's source and licence
 
 - Name (placelens for now).
 - Demo place: Beacon Isle (only 2 Commons photos: own photos better) or a well-photographed Cape Town landmark.
-- SAM 3D Objects: not on the hackathon's model list (open weights listed: Muse Glimmer, Muse Spark Open). Ask @CV.
+- SAM 3D Objects / VGGT: not on the participant guide's model list (28 Oct), so they wouldn't score as Meta tooling.
+  Props: SAM 3.1 cut-out + Muse size + Muse Image side/back views instead. Request Modal (first 1,000) and Baseten
+  (Muse Spark Open, for Best Open Weight) credits.
 - Muse Wonder vs Muse Spark for the pick: Wonder works on pay-as-you-go but took 53 s / $0.09 a photo. Compare.

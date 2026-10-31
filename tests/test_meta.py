@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from placelens.meta import MissingKeyError, data_url, load_key, parse_segments
+from placelens.meta import MissingKeyError, data_url, final_answer, load_key, parse_segments
 
 # SAM 3.1's real reply for "building" on a 1280x891 photo of Cape Town City Hall (26 Oct 2026).
 RAW = (Path(__file__).parent / "data" / "sam_city_hall.txt").read_text(encoding="utf-8")
@@ -43,3 +43,27 @@ def test_data_url_mime(tmp_path):
     p = tmp_path / "x.png"
     p.write_bytes(b"\x89PNG")
     assert data_url(p).startswith("data:image/png;base64,")
+
+
+def test_named_key_from_env_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("BASETEN_API_KEY", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("MODEL_API_KEY=abc\nBASETEN_API_KEY=xyz\n", encoding="utf-8")
+    assert load_key(env, "BASETEN_API_KEY") == "xyz"
+
+
+def test_final_answer_drops_reasoning():
+    assert final_answer('<think>front, so...</think>\n{"side": "back"}') == '{"side": "back"}'
+    assert final_answer("<think>cut off mid-thought") == ""
+    assert final_answer("plain answer") == "plain answer"
+
+
+def test_paid_calls_can_be_blocked(monkeypatch):
+    from placelens.meta import SPARK, MetaClient, PaidCallBlocked
+
+    monkeypatch.setenv("PLACELENS_META_OFF", "1")
+    meta = MetaClient("not-a-key")
+    with pytest.raises(PaidCallBlocked):
+        meta.ask("hi", model=SPARK)
+    with pytest.raises(PaidCallBlocked):
+        meta.segment("x.jpg")

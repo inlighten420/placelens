@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from placelens.meta import SPARK, WONDER, MetaClient, Segment, parse_segments
+from placelens.meta import OPEN, SPARK, WONDER, MetaClient, Segment, parse_segments
 
 OUT = Path("out/api_smoke")
 COLOURS = [(255, 40, 40), (40, 120, 255), (250, 180, 0), (60, 170, 80)]
@@ -76,7 +76,12 @@ def main():
         (OUT / "wonder.txt").write_text(reply, encoding="utf-8")
         print("         " + reply.strip().replace("\n", "\n         "))
 
-    print(f"total ~${meta.spent:.4f}")
+    reply = timed("open  ", meta, lambda: meta.ask(WONDER_PROMPT, photo, model=OPEN))
+    if reply is not None:
+        (OUT / "open.txt").write_text(reply, encoding="utf-8")
+        print("         " + reply.strip().replace("\n", "\n         "))
+
+    print(f"total ~${meta.spent:.4f} (Spark Open runs on Baseten credits, not counted)")
 
 
 if __name__ == "__main__":
