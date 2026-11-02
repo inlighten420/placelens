@@ -28,6 +28,8 @@ class Building:
 
     @property
     def url(self) -> str:
+        if self.osm_id.startswith("overture/"):  # (traced by Microsoft or Google, not on OpenStreetMap: footprints.py)
+            return f"https://explore.overturemaps.org/?id={self.osm_id.split('/', 1)[1]}"
         return f"https://www.openstreetmap.org/{self.osm_id}"
 
 

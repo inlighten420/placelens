@@ -47,15 +47,24 @@ def ask(meta, prompt: str, photos, reply: Path, model: str, votes: int = 1, fres
     paths = [vote_path(reply, i) for i in range(max(1, votes))]
     missing = [p for p in paths if fresh or not p.exists()]
 
-    def one(path: Path) -> None:
+    def one(path: Path) -> Exception | None:
         extra = {"effort": effort} if effort else {}
-        path.write_text(meta.ask(prompt, photos, model=model, **extra), encoding="utf-8")
+        try:
+            answer = meta.ask(prompt, photos, model=model, **extra)
+        except Exception as e:  # (a vote that times out or errors is left out, not the whole question)
+            return e
+        if not answer.strip():  # (cut off while still thinking: no answer, not saved, so asked again next time)
+            return ValueError("empty answer")
+        path.write_text(answer, encoding="utf-8")
+        return None
 
     if missing:
         reply.parent.mkdir(parents=True, exist_ok=True)
         with ThreadPoolExecutor(min(PARALLEL, len(missing))) as pool:
-            list(pool.map(one, missing))
-    return [p.read_text(encoding="utf-8") for p in paths]
+            failed = [e for e in pool.map(one, missing) if e is not None]
+        if failed and not any(p.exists() for p in paths):
+            raise failed[0]  # no vote came back at all
+    return [p.read_text(encoding="utf-8") for p in paths if p.exists()]
 
 
 def majority(values: list) -> tuple[object, float]:

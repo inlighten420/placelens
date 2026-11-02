@@ -29,7 +29,10 @@ GEO_LEAD = 3.0  # times the runner-up's score
 
 
 def prepare_photo(photo: str | Path, out: Path) -> Path:
-    """An upright, smaller JPEG copy the API accepts (iPhone HEIC included)."""
+    """An upright, smaller JPEG copy the API accepts (iPhone HEIC included). Made once: opening a HEIC takes about 5 s,
+    and a house's 12 photos were opened twice per build for copies that already existed (1 Nov)."""
+    if out.exists() and out.stat().st_mtime >= Path(photo).stat().st_mtime:
+        return out
     with Image.open(photo) as img:
         img = ImageOps.exif_transpose(img).convert("RGB")
         img.thumbnail((MAX_SIDE, MAX_SIDE))

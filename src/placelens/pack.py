@@ -18,7 +18,8 @@ from pathlib import Path
 
 FORMAT = "placelens-pack"
 VERSION = 1
-OSM = "Building data © OpenStreetMap contributors, ODbL (openstreetmap.org/copyright)"
+OSM = ("Building data © OpenStreetMap contributors and Overture Maps Foundation (with Microsoft and Google building "
+       "footprints), ODbL (openstreetmap.org/copyright, overturemaps.org)")
 
 
 def prop_yaw(facing_bearing: float) -> float:

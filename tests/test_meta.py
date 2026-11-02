@@ -67,3 +67,47 @@ def test_paid_calls_can_be_blocked(monkeypatch):
         meta.ask("hi", model=SPARK)
     with pytest.raises(PaidCallBlocked):
         meta.segment("x.jpg")
+
+
+def test_usage_since_totals_both_logs(tmp_path, monkeypatch):
+    import json
+
+    from placelens import meta
+
+    monkeypatch.setattr(meta, "META_USAGE", tmp_path / "meta.jsonl")
+    monkeypatch.setattr(meta, "OPEN_USAGE", tmp_path / "open.jsonl")
+    (tmp_path / "meta.jsonl").write_text("\n".join(json.dumps(e) for e in [
+        {"time": 50, "what": "sam-3.1", "usd": 1.0},  # before: not counted
+        {"time": 100, "what": "sam-3.1", "usd": 0.0025}, {"time": 101, "what": "muse-image-1.0", "usd": 0.01}]))
+    (tmp_path / "open.jsonl").write_text("\n".join(json.dumps(e) for e in [
+        {"time": 100, "in": 1000, "out": 200, "secs": 4.2}, {"time": 102, "in": 500, "out": 50}]) + "\nnot json\n")
+    assert meta.usage_since(100) == {"meta_usd": 0.0125, "meta_calls": 2, "open_calls": 2, "open_tokens": 1750,
+                                     "open_slowest_s": 4.2}
+
+
+def test_paid_calls_are_logged(tmp_path, monkeypatch):
+    from placelens import meta
+
+    monkeypatch.setattr(meta, "META_USAGE", tmp_path / "meta.jsonl")
+    client = meta.MetaClient("not-a-key")
+    client._add(meta.SAM_PER_IMAGE, what=meta.SAM)
+    client._add(tokens=500)  # Spark Open tokens: free, not in the paid log
+    lines = (tmp_path / "meta.jsonl").read_text().splitlines()
+    assert len(lines) == 1 and '"sam-3.1"' in lines[0]
+
+
+def test_progress_steps_go_to_the_file_named_in_the_environment(tmp_path, monkeypatch):
+    import json
+
+    from placelens.progress import ENV, Counter, step
+
+    monkeypatch.delenv(ENV, raising=False)
+    step("nowhere")  # no file asked for: nothing happens
+    monkeypatch.setenv(ENV, str(tmp_path / "p.jsonl"))
+    step("cutting out the bear in photo 3 of 9", 2, 9)
+    Counter("finding the building in photo", 2).tick()
+    events = [json.loads(line) for line in (tmp_path / "p.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert events[0]["detail"].startswith("cutting") and (events[0]["count"], events[0]["total"]) == (2, 9)
+    assert "done" not in events[0]  # (a game reads "done": true as the end of the make)
+    assert [e["detail"] for e in events[1:]] == ["finding the building in photo 0 of 2",
+                                                 "finding the building in photo 1 of 2"]

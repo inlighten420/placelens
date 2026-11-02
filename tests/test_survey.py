@@ -47,8 +47,7 @@ def test_the_agent_runs_tools_and_keeps_what_it_built(tmp_path):
     survey = Survey(tmp_path, chat, run, lambda p: '{"kind": "building"}', tmp_path / "log", log=lambda *_: None)
     assert survey.go() == "Built the house; p3 needs you."
     work = str(tmp_path / "log" / "work")
-    assert ran[0] == ["build", "p1.jpg", "p2.jpg", "--json", "--out", work, "--replies", str(Path("out/pick")),
-                      "--refine"]
+    assert ran[0] == ["build", "p1.jpg", "p2.jpg", "--json", "--out", work, "--replies", str(Path("out/pick"))]
     assert ran[1] == ["pack", "street", "out/build/way_1", "--json", "--out", work]
     assert survey.questions == ["Which house is p3?"]
     assert survey.built[0][:2] == ("building", str(Path("out/build/way_1")))
@@ -100,7 +99,7 @@ def test_what_was_built_is_packed_even_if_the_agent_forgets(tmp_path):
 
     def run(argv):
         ran.append(argv)
-        return {"name": "tank", "model": "w/props/t/prop.glb"} if argv[0] == "prop" else {"items": 1}
+        return {"name": "tank", "model": "w/props/t/prop.glb"} if argv[0] == "object" else {"items": 1}
 
     survey = Survey(tmp_path / "photos", lambda m, t: script.pop(0), run, lambda p: "", tmp_path / "log",
                     log=lambda *_: None)
@@ -140,7 +139,7 @@ def test_the_persons_notes_brief_the_agent_and_become_settings(tmp_path):
     assert "symmetrical" in briefs[0]
     assert ran[0][-5:] == ["--floors", "2", "--notes", "back is like the front", "--symmetric"]
     assert ran[1][ran[1].index("--what"):] == ["--what", "water tank", "--height", "1.8", "--notes", "1.8 m tall",
-                                               "--shape", "round"]
+                                               "--round"]
     assert events[0] == {"tool": "build", "about": "1 photo(s), symmetric=True, floors=2", "heavy": True}
     assert events[1] == {"tool": "build", "ok": False, "error": "no"}
     assert events[3]["ok"] is True
@@ -150,3 +149,59 @@ def test_the_persons_notes_brief_the_agent_and_become_settings(tmp_path):
 def test_the_agent_hears_whether_mirroring_happened():
     told = _brief_build({"model": "w/b/building.glb", "photos": [], "symmetric": "asked, but nothing was mirrored"})
     assert told["symmetric"] == "asked, but nothing was mirrored"
+
+
+def test_one_look_takes_several_photos(tmp_path):
+    seen = []
+    survey = Survey(tmp_path, None, None, lambda photos: seen.append(photos) or "[...]", tmp_path / "log",
+                    log=lambda *_: None)
+    answer = survey.call("describe", {"photos": ["a/1.jpg", "a/2.jpg", "a/3.jpg", "a/4.jpg", "a/5.jpg"]})
+    assert seen == [["a/1.jpg", "a/2.jpg", "a/3.jpg", "a/4.jpg"]]  # at most DESCRIBE_AT_ONCE
+    assert answer["photos"] == ["1.jpg", "2.jpg", "3.jpg", "4.jpg"] and survey.looks == 1
+
+
+def test_saying_what_it_is_skips_straight_to_it(tmp_path):
+    briefs, offered = [], []
+
+    def chat(messages, tools):
+        briefs.append(messages[1]["content"])
+        offered.append({t["function"]["name"] for t in tools})
+        return {"role": "assistant", "content": "", "tool_calls": [_call(1, "build", photos=["b.jpg"])]} \
+            if len(briefs) == 1 else {"role": "assistant", "content": "done"}
+
+    survey = Survey(tmp_path, chat, lambda a: {}, lambda p: "", tmp_path / "log", log=lambda *_: None, kind="object")
+    survey.go()
+    assert "ONE object" in briefs[0]
+    assert "prop" in offered[0] and not {"build", "pick"} & offered[0]
+    refused = json.loads(next(m for m in survey.messages if m["role"] == "tool")["content"])
+    assert refused["error"].startswith("no tool 'build' here")
+
+
+def test_one_object_is_made_from_every_photo(tmp_path, monkeypatch):
+    import placelens.survey as survey_module
+
+    monkeypatch.setattr(survey_module, "list_photos", lambda folder: {
+        "photos": [{"photo": str(folder / n)} for n in ("a.jpg", "b.jpg", "c.jpg")]})
+    ran = []
+    survey = Survey(tmp_path, None, lambda argv: ran.append(argv) or {"error": "x"}, None, tmp_path / "log",
+                    log=lambda *_: None, kind="object")
+    survey.call("prop", {"photos": [str(tmp_path / "a.jpg")]})
+    assert [Path(p).name for p in ran[0][1:4]] == ["a.jpg", "b.jpg", "c.jpg"]
+
+
+def test_a_first_look_decides_what_one_group_of_photos_is(tmp_path, monkeypatch):
+    import placelens.muse as muse
+    import placelens.pick as pick
+    import placelens.survey as survey_module
+
+    monkeypatch.setattr(pick, "prepare_photo", lambda photo, out: out)
+    monkeypatch.setattr(muse, "ask", lambda *a, **k: ['{"kind": "object", "what": "teddy bear", "sure": 0.95}'])
+    one = {"photos": [{"photo": "a.jpg"}, {"photo": "b.jpg"}], "groups": [["a.jpg", "b.jpg"]]}
+    monkeypatch.setattr(survey_module, "list_photos", lambda folder: one)
+    assert survey_module.first_look(None, tmp_path, tmp_path) == {"kind": "object", "what": "teddy bear",
+                                                                  "sure": 0.95, "photo": "a.jpg"}
+    monkeypatch.setattr(survey_module, "list_photos", lambda folder: {**one, "groups": [["a.jpg"], ["b.jpg"]]})
+    assert survey_module.first_look(None, tmp_path, tmp_path) is None  # two groups: the agent sorts them out
+    monkeypatch.setattr(survey_module, "list_photos", lambda folder: one)
+    monkeypatch.setattr(muse, "ask", lambda *a, **k: ['{"kind": "object", "what": "?", "sure": 0.4}'])
+    assert survey_module.first_look(None, tmp_path, tmp_path) is None  # not sure: the agent looks properly

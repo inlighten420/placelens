@@ -101,3 +101,20 @@ def test_notes_follow_the_prompt_and_no_notes_leave_it_alone():
     assert noted("Q?", None) == "Q?" and noted("Q?", "  ") == "Q?"
     asked = noted("Q?", " the back matches the front ")
     assert asked.startswith("Q?") and '"the back matches the front"' in asked
+
+
+def test_a_vote_that_fails_is_left_out_not_the_question(tmp_path):
+    from placelens.muse import ask
+
+    class Flaky:
+        calls = 0
+
+        def ask(self, prompt, photos, model):
+            Flaky.calls += 1
+            if Flaky.calls == 2:
+                raise TimeoutError("one vote stalled")
+            return "" if Flaky.calls == 3 else '{"side": "back"}'
+
+    answers = ask(Flaky(), "which side?", None, tmp_path / "r.txt", "m", votes=4)
+    assert answers == ['{"side": "back"}', '{"side": "back"}']  # the stalled and the empty votes left out
+    assert len(list(tmp_path.glob("*.txt"))) == 2  # and not saved: asked again next time

@@ -13,7 +13,9 @@ import base64
 import mimetypes
 import os
 import re
+import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +32,15 @@ OPEN = "meta-models/muse-spark-open-1026"  # the hackathon's id; Baseten's docs 
 OPEN_URL = "https://inference.baseten.co/v1"
 MODELS = {"spark": SPARK, "wonder": WONDER, "open": OPEN}  # --model choices
 OPEN_USAGE = Path("out/open_usage.jsonl")  # one line per Spark Open call: what the Baseten credits went on
+META_USAGE = Path("out/meta_usage.jsonl")  # one line per paid Meta API call: what it cost
+OPEN_TIMEOUT = 90.0  # s a Spark Open reply may take before it's asked again (the client's default, 600 s, hid a
+# 257 s stall on 31 Oct); replies take 1-20 s, longer with reasoning_effort high
+OPEN_RETRIES = 2
+# Tokens a Spark Open reply may use, thinking included. Answers take 300-1,300; now and then one thinks on to
+# 10,000-20,000 tokens (1-4 minutes) and the question waits for it (teddy, 1 Nov). Cut off there, that vote comes back
+# empty and is left out (muse.ask). Asked to think hard (effort "high"), more room.
+OPEN_MAX_TOKENS = 6000
+OPEN_MAX_TOKENS_HIGH = 16000
 
 # USD per 1M tokens (input, output), from dev.meta.ai/docs/pricing-rate-limits, 26 Oct 2026.
 # OPEN isn't listed: it runs on Baseten's hackathon credits ($100), so it counts as 0 here.
@@ -49,6 +60,18 @@ class PaidCallBlocked(RuntimeError):
 def _paid(what: str) -> None:
     if os.environ.get("PLACELENS_META_OFF") == "1":
         raise PaidCallBlocked(f"{what} would call the paid Meta API (PLACELENS_META_OFF=1); only saved replies allowed")
+
+
+def has_key(name: str, env_file: str | Path = ".env") -> bool:
+    """Whether `name` is set (environment or .env)."""
+    try:
+        load_key(env_file, name)
+        return True
+    except MissingKeyError:
+        return False
+
+
+_SAID_NO_OPEN = False
 
 
 def load_key(env_file: str | Path = ".env", name: str = "MODEL_API_KEY") -> str:
@@ -113,6 +136,27 @@ def parse_segments(raw: str) -> list[Segment]:
     return segments
 
 
+def segments_from_file(reply: Path) -> list[Segment]:
+    """`parse_segments` of a saved SAM reply, unpacked once. SAM's compressed masks unpack in plain Python, seconds for
+    a house: a cached house build spent 2 of its 2.5 minutes unpacking the same saved replies again (1 Nov). The
+    unpacked masks are kept beside the reply (<reply>.masks.npz)."""
+    reply = Path(reply)
+    packed = reply.with_name(reply.name + ".masks.npz")
+    if packed.exists() and packed.stat().st_mtime >= reply.stat().st_mtime:
+        with np.load(packed, allow_pickle=False) as d:
+            return [Segment(str(d[f"id{i}"]), tuple(int(v) for v in d[f"box{i}"]), d[f"mask{i}"].astype(bool))
+                    for i in range(int(d["count"]))]
+    segments = parse_segments(reply.read_text(encoding="utf-8"))
+    arrays = {"count": np.array(len(segments))}
+    for i, s in enumerate(segments):
+        arrays.update({f"id{i}": np.array(s.object_id), f"box{i}": np.array(s.box), f"mask{i}": s.mask})
+    try:
+        np.savez_compressed(packed, **arrays)
+    except OSError:  # (a read-only folder: unpacked again next time)
+        pass
+    return segments
+
+
 class MetaClient:
     def __init__(self, api_key: str | None = None):
         from openai import OpenAI
@@ -124,17 +168,20 @@ class MetaClient:
         self._open = None  # Baseten client, made on first use so its key is only needed then
         self._lock = threading.Lock()  # muse.ask votes in parallel
 
-    def _add(self, usd: float = 0.0, tokens: int = 0) -> None:
+    def _add(self, usd: float = 0.0, tokens: int = 0, what: str | None = None) -> None:
         with self._lock:
             self.spent += usd
             self.open_tokens += tokens
+            if usd and what:
+                _append(META_USAGE, {"time": round(time.time()), "what": what, "usd": round(usd, 6)})
 
     def open_client(self):
         with self._lock:
             if self._open is None:
                 from openai import OpenAI
 
-                self._open = OpenAI(base_url=OPEN_URL, api_key=load_key(name="BASETEN_API_KEY"))
+                self._open = OpenAI(base_url=OPEN_URL, api_key=load_key(name="BASETEN_API_KEY"),
+                                    timeout=OPEN_TIMEOUT, max_retries=OPEN_RETRIES)
         return self._open
 
     def segment(self, photo: str | Path, prompt: str = "building") -> tuple[list[Segment], str]:
@@ -150,7 +197,7 @@ class MetaClient:
             stream=True,
         )
         raw = "".join(e.delta for e in stream if e.type == "response.output_text.delta")
-        self._add(SAM_PER_IMAGE)
+        self._add(SAM_PER_IMAGE, what=SAM)
         return parse_segments(raw), raw
 
     def draw(self, prompt: str, photos: list[str | Path]) -> bytes:
@@ -164,7 +211,7 @@ class MetaClient:
         r = requests.post(f"{BASE_URL}/images/edits", headers={"Authorization": f"Bearer {self.key}"},
                           data={"model": IMAGE, "prompt": prompt}, files=files, timeout=300)
         r.raise_for_status()
-        self._add(IMAGE_PER_IMAGE)
+        self._add(IMAGE_PER_IMAGE, what=IMAGE)
         return base64.b64decode(r.json()["data"][0]["b64_json"])
 
     def ask(self, prompt: str, photo: str | Path | list | None = None, model: str = SPARK,
@@ -172,7 +219,16 @@ class MetaClient:
         """A question, optionally about a photo or several (in order). Returns the model's text. `effort` ("low",
         "medium", "high"): how long Spark Open thinks first; the Meta API models ignore it."""
         if model == OPEN:
-            return self.ask_open(prompt, photo, effort)
+            if has_key("BASETEN_API_KEY"):
+                return self.ask_open(prompt, photo, effort)
+            # No Baseten key (someone trying PlaceLens with just a Meta API key): the same questions go to Muse
+            # Spark on the Meta API, on their key. Never happens where Spark Open is set up, so it spends nothing extra.
+            global _SAID_NO_OPEN
+            if not _SAID_NO_OPEN:
+                _SAID_NO_OPEN = True
+                print("placelens: no BASETEN_API_KEY, so Muse Spark Open's questions go to Muse Spark on the Meta API "
+                      "(your MODEL_API_KEY; a few cents a make)", file=sys.stderr)
+            model = SPARK
         _paid(model)
         if photo is None:
             content = prompt
@@ -184,7 +240,7 @@ class MetaClient:
             ]}]
         r = self.client.responses.create(model=model, input=content)
         price_in, price_out = TOKEN_PRICES.get(model, (0, 0))
-        self._add((r.usage.input_tokens * price_in + r.usage.output_tokens * price_out) / 1e6)
+        self._add((r.usage.input_tokens * price_in + r.usage.output_tokens * price_out) / 1e6, what=model)
         return r.output_text
 
     def ask_open(self, prompt: str, photo: str | Path | list | None = None, effort: str | None = None) -> str:
@@ -192,22 +248,51 @@ class MetaClient:
         photos = [] if photo is None else photo if isinstance(photo, list) else [photo]
         content = [{"type": "text", "text": prompt},
                    *({"type": "image_url", "image_url": {"url": data_url(p)}} for p in photos)]
+        started = time.time()
         r = self.open_client().chat.completions.create(
             model=OPEN, messages=[{"role": "user", "content": content if photos else prompt}],
+            max_tokens=OPEN_MAX_TOKENS_HIGH if effort == "high" else OPEN_MAX_TOKENS,
             **({"reasoning_effort": effort} if effort else {}))
         if r.usage:
             self._add(tokens=r.usage.total_tokens)
-            self.log_usage(r.usage, len(photos), effort)
+            self.log_usage(r.usage, len(photos), effort, time.time() - started)
         return final_answer(r.choices[0].message.content or "")
 
-    def log_usage(self, usage, photos: int, effort: str | None) -> None:
-        """One line in OPEN_USAGE for a Spark Open call."""
-        import json
-        import time
-
-        line = json.dumps({"time": round(time.time()), "in": usage.prompt_tokens, "out": usage.completion_tokens,
-                           "photos": photos, "effort": effort})
+    def log_usage(self, usage, photos: int, effort: str | None, secs: float | None = None) -> None:
+        """One line in OPEN_USAGE for a Spark Open call (with how long it took, so stalls show)."""
         with self._lock:
-            OPEN_USAGE.parent.mkdir(parents=True, exist_ok=True)
-            with OPEN_USAGE.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
+            _append(OPEN_USAGE, {"time": round(time.time()), "in": usage.prompt_tokens, "out": usage.completion_tokens,
+                                 "photos": photos, "effort": effort,
+                                 **({"secs": round(secs, 1)} if secs is not None else {})})
+
+
+def _append(path: Path, entry: dict) -> None:
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def usage_since(start: float) -> dict:
+    """What was spent from `start` (time.time()) on, by every command run here: paid Meta US$ and calls, Spark Open
+    calls and tokens (free Baseten credits). Read from the two logs, so commands run as subprocesses count too."""
+    import json
+
+    def lines(path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        out = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("time", 0) >= int(start):
+                out.append(entry)
+        return out
+
+    paid, free = lines(META_USAGE), lines(OPEN_USAGE)
+    return {"meta_usd": round(sum(e.get("usd", 0) for e in paid), 4), "meta_calls": len(paid),
+            "open_calls": len(free), "open_tokens": sum(e.get("in", 0) + e.get("out", 0) for e in free),
+            "open_slowest_s": max((e["secs"] for e in free if "secs" in e), default=None)}

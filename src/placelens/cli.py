@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 
 from . import __version__
-from .osm import fetch_buildings
+from .footprints import fetch_buildings  # (Overture, else OpenStreetMap)
 from .photo import read_camera
 from .render import draw_map
 from .view import LocalFrame, find_candidates
@@ -157,7 +157,7 @@ def _pick(args) -> dict:
 
     from PIL import Image
 
-    from .meta import MODELS, MetaClient, MissingKeyError, parse_segments
+    from .meta import MODELS, MetaClient, MissingKeyError, segments_from_file
     from .muse import ask, merge_verdicts, noted
     from .pick import build_prompt, decide, line_up, parse_verdict, photo_span, prepare_photo
     from .render import draw_check
@@ -182,7 +182,7 @@ def _pick(args) -> dict:
     for noun in SAM_NOUNS:  # some photos only answer to the second
         sam_file = out / (f"{stem}_sam.txt" if noun == SAM_NOUNS[0] else f"{stem}_sam_{noun}.txt")
         if sam_file.exists() and not args.fresh:
-            segments = parse_segments(sam_file.read_text(encoding="utf-8"))
+            segments = segments_from_file(sam_file)
         else:
             segments, raw = meta.segment(small, noun)
             sam_file.write_text(raw, encoding="utf-8")
@@ -192,10 +192,17 @@ def _pick(args) -> dict:
     span = photo_span(main.box, width, fov) if main else None
 
     model = MODELS[args.model]
-    prompt = noted(build_prompt(candidates), getattr(args, "notes", None))
-    muse_file = out / f"{stem}_{args.model}_{hashlib.sha1(prompt.encode()).hexdigest()[:8]}.txt"
-    verdict = merge_verdicts([parse_verdict(a) for a in
-                              ask(meta, prompt, small, muse_file, model, _votes(args, model), args.fresh)])
+    sight = getattr(args, "sight", None)
+    if sight is not None:  # (the building's settled by triangulation: no "which numbered building?" for Muse; its
+        # distance and floors are the triangulation's own answers about this photo)
+        from .pick import Verdict
+
+        verdict = Verdict(None, 0.9, ["the photos' lines meet at it (triangulation)"], sight.floors, sight.distance)
+    else:
+        prompt = noted(build_prompt(candidates), getattr(args, "notes", None))
+        muse_file = out / f"{stem}_{args.model}_{hashlib.sha1(prompt.encode()).hexdigest()[:8]}.txt"
+        verdict = merge_verdicts([parse_verdict(a) for a in
+                                  ask(meta, prompt, small, muse_file, model, _votes(args, model), args.fresh)])
     distance = float(verdict.distance_m) if isinstance(verdict.distance_m, (int, float)) else None
     lineups = line_up(candidates, span, heading, fov, args.margin, args.move, distance) if span else []
     decision = decide(lineups, verdict)
@@ -614,6 +621,17 @@ def _draw_walls(small_path, views: list[dict], used: set[int], out: Path, gables
     return out
 
 
+def _most_floors(values: list) -> int | None:
+    """A building's floors from what each photo saw: the most that at least two photos agree on (a slope hides
+    floors from some sides, never adds them: the user's house is 2 storeys at the front, 1 at the back, and the
+    majority flipped to 1 when the photo set changed, 1 Nov); with one count per value, the majority."""
+    from collections import Counter
+
+    counts = Counter(v for v in values if isinstance(v, int) and v > 0)
+    agreed = [v for v, n in counts.items() if n >= 2]
+    return max(agreed) if agreed else _majority(values)
+
+
 def _majority(values: list) -> int | None:
     """The most common whole number, the larger on a tie; None if there are none."""
     from collections import Counter
@@ -701,13 +719,38 @@ def cmd_build(args) -> None:
     # be used is noted, not fatal, unless it's the only one.
     from concurrent.futures import ThreadPoolExecutor
 
+    from .progress import Counter, step
+
+    # Which building: all the photos together, where their lines meet (buildings.py), not a vote of each photo on its
+    # own (with Overture's fuller map that chose the neighbour's house, 1 Nov). One photo, or --building: as before.
+    target, triangulated = None, None
+    if args.building is None and len(args.photo) > 1:
+        from .buildings import choose
+        from .meta import MetaClient
+
+        replies = Path(args.replies) if getattr(args, "replies", None) else Path(args.out) / "pick"
+        try:
+            triangulated = choose(args.photo, MetaClient(), replies)
+        except ValueError:  # (no photo with both GPS and compass: each photo picks on its own, as before)
+            triangulated = None
+        if triangulated is not None and triangulated.building is None:
+            _fail(f"not sure which building it is: {triangulated.why}", args.json, EXIT_ASK)
+        target = triangulated.building.osm_id if triangulated else None
+
+    picking = Counter("finding the building in photo", len(args.photo))
+
+    by_photo = {s.photo: s for s in triangulated.sights} if triangulated else {}
+
     def pick_one(photo: str):
         try:
-            return _pick(argparse.Namespace(**{**vars(args), "photo": photo}))
+            return _pick(argparse.Namespace(**{**vars(args), "photo": photo, "sight": by_photo.get(Path(photo)),
+                                               "no_map": True}))  # (a map picture per photo: unused here, slow)
         except Failed as e:
             if len(args.photo) == 1:
                 raise
             return e
+        finally:
+            picking.tick()
 
     with ThreadPoolExecutor(BUILD_PARALLEL) as pool:
         picked = list(pool.map(pick_one, args.photo))
@@ -717,7 +760,16 @@ def cmd_build(args) -> None:
             runs.append({"photo": photo, "used": False, "why": result.msg})
             continue
         ctx = result.pop("_")
-        if args.building is not None:
+        if target is not None:  # (the triangulated building, if this photo can see it)
+            chosen = next((c for c in ctx["by_rank"].values() if c.building.osm_id == target), None)
+            sight = next((s for s in triangulated.sights if s.photo == Path(photo)), None)
+            if sight is not None and not sight.used:
+                chosen, result["why"] = None, sight.why
+            elif chosen is None:
+                result["why"] = "the building the photos point at isn't in its view (its compass or GPS is off)"
+            else:
+                result["why"] = triangulated.why
+        elif args.building is not None:
             chosen = ctx["by_rank"].get(args.building)
             if chosen is None:
                 _fail(f"no candidate {args.building}; candidates are {sorted(ctx['by_rank'])}", args.json)
@@ -732,6 +784,7 @@ def cmd_build(args) -> None:
     for r in runs:
         r["side"] = sides.get(Path(r["photo"]).stem.lower())
         r["side_from"] = "you" if r["side"] else None
+    step("Muse is working out which side of the building each photo shows")
     _muse_sides(args, runs)
     _rescue(runs)
     picked = [r for r in runs if r["used"]]
@@ -741,7 +794,7 @@ def cmd_build(args) -> None:
         _fail(f"not sure which building it is ({whys}); run `placelens pick` and {hint}", args.json, EXIT_ASK)
     # The building most photos picked; photos of a different one are left out.
     votes = [r["chosen"].building.osm_id for r in picked]
-    osm_id = max(set(votes), key=votes.count)
+    osm_id = target or max(set(votes), key=votes.count)
     for r in picked:
         if r["chosen"].building.osm_id != osm_id:
             r["used"], r["why"] = False, f"picked another building ({r['chosen'].building.osm_id})"
@@ -749,7 +802,7 @@ def cmd_build(args) -> None:
     chosen, frame = used[0]["chosen"], used[0]["ctx"]["frame"]
 
     tags = chosen.building.tags
-    floors = _majority([r["ctx"]["verdict"].floors for r in used])
+    floors = _most_floors([r["ctx"]["verdict"].floors for r in used])
     if args.height:
         height, source = args.height, "you"
     elif args.floors:
@@ -759,7 +812,9 @@ def cmd_build(args) -> None:
     centre = chosen.polygon.centroid
     footprint = affinity.translate(chosen.polygon, -centre.x, -centre.y)
     anchor = frame.to_latlon(centre.x, centre.y)
+    step("Muse is reading the roof")
     roof, ridge, roof_source = _roof(args, used, footprint, height)
+    step("lining the photos up with the walls")
 
     out = Path(args.out) / "build" / osm_id.replace("/", "_")
     out.mkdir(parents=True, exist_ok=True)
@@ -797,6 +852,7 @@ def cmd_build(args) -> None:
             roof_source += f"; pitch measured on {len(pitches)} of {len(roof.blocks)} block(s)"
     refined = None
     if args.refine:  # Muse critiques the model over every photo; SAM's outline decides what's kept
+        step("refining: Muse critiques the shape against every photo (a few rounds)")
         refined = _refine(args, used, footprint, height, roof, ridge, pitches, out, front)
         if refined:
             shape = refined["shape"]
@@ -844,6 +900,7 @@ def cmd_build(args) -> None:
             r["check"] = _draw_walls(r["ctx"]["small"], r["views"], mine, out / f"check_{Path(r['photo']).stem}.jpg",
                                      gables)
 
+    step("finishing: Muse reads the colours, windows and doors go in")
     look = _look(args, used)
     glb = write_glb(out / "building.glb", extrude(footprint, height, photos, roof, look), name=osm_id)
     place = out / "place.geojson"
@@ -869,7 +926,8 @@ def cmd_build(args) -> None:
         ATTRIBUTION, facing=main["cam"].heading if main else 0.0)
     built = {
         "building": _row(chosen, frame),
-        "chosen_by": "you" if args.building is not None else "pick",
+        "chosen_by": "you" if args.building is not None else "triangulation" if target else "pick",
+        "triangulated": triangulated.as_dict() if triangulated else None,
         "height_m": round(height, 2),
         "height_source": source,
         "size_m": [round(sides[1], 1), round(sides[0], 1)],
@@ -1006,10 +1064,10 @@ def _votes(args, model: str) -> int:
 
 
 def _cached_segment(meta, small: Path, noun: str, reply: Path, fresh: bool):
-    from .meta import parse_segments
+    from .meta import segments_from_file
 
     if reply.exists() and not fresh:
-        return parse_segments(reply.read_text(encoding="utf-8"))
+        return segments_from_file(reply)
     segments, raw = meta.segment(small, noun)
     reply.write_text(raw, encoding="utf-8")
     return segments
@@ -1042,7 +1100,10 @@ def cmd_prop_walkaround(args) -> None:
     out = Path(args.out) / "props" / f"{first_stem}_walk{len(args.photo)}"
     out.mkdir(parents=True, exist_ok=True)
 
+    from .progress import step
+
     # What it is and how big, from the first photo (its front).
+    step("Muse is working out what it is and how big")
     smalls = [prepare_photo(p, out / f"{Path(p).stem}.jpg") for p in args.photo]
     prompt = noted(PROP_PROMPT, args.notes)
     asked = hashlib.sha1(prompt.encode()).hexdigest()[:8]
@@ -1061,6 +1122,7 @@ def cmd_prop_walkaround(args) -> None:
     walk_asked = hashlib.sha1(WALK_PROMPT.encode()).hexdigest()[:8]
     for i, (photo, small) in enumerate(zip(args.photo, smalls, strict=True)):
         stem = Path(photo).stem
+        step(f"cutting out the {noun} in photo {i + 1} of {len(args.photo)}", i, len(args.photo))
         cam = read_camera(photo)
         segs = _cached_segment(meta, small, noun, out / f"{stem}_sam_{slug}.txt", args.fresh)
         if not segs:
@@ -1102,6 +1164,7 @@ def cmd_prop_walkaround(args) -> None:
     if len(shots) < 3:
         _fail(f"only {len(shots)} usable photos of the {noun}; walk round it and take at least 6", args.json)
 
+    step(f"carving the {noun} from {len(shots)} cut-outs, then Muse checks it against the photos")
     place_shots(shots, height)
     if args.match:  # the cameras from the photos themselves, where they match each other
         from .solve import View, solve
@@ -1181,7 +1244,10 @@ def _imagined_shots(meta, args, name: str, noun: str, small: Path, out: Path, mo
 
     shots, notes = [], []
     slug = re.sub(r"[^a-z0-9]+", "-", noun.lower()).strip("-")
-    for side in DRAWN:
+    from .progress import step
+
+    for k, side in enumerate(DRAWN):
+        step(f"Muse Image is drawing the {name}'s {side} side", k, len(DRAWN))
         prompt = noted(draw_prompt(name, side), args.notes)
         tag = hashlib.sha1(prompt.encode()).hexdigest()[:8]
         picture = out / f"imagined_{side}_{tag}.jpg"
@@ -1286,7 +1352,7 @@ def cmd_prop(args) -> None:
     from PIL import Image, ImageOps
 
     from .build import write_glb
-    from .meta import MODELS, MetaClient, MissingKeyError, parse_segments
+    from .meta import MODELS, MetaClient, MissingKeyError, segments_from_file
     from .muse import merge_props, noted
     from .pick import pixel_to_offset, prepare_photo
     from .prop import PROP_PROMPT, cutout_png, lathe, outline, parse_prop, place, solid
@@ -1303,7 +1369,10 @@ def cmd_prop(args) -> None:
     width = Image.open(small).width
     fov = args.fov if args.fov is not None else cam.fov
 
+    from .progress import step
+
     # What it is and how big: Muse. Replies are saved, so re-running is free unless --fresh.
+    step("Muse is working out what it is and how big")
     model = MODELS[args.model]
     prompt = noted(PROP_PROMPT, args.notes)
     reply = out / f"{stem}_{args.model}_prop_{hashlib.sha1(prompt.encode()).hexdigest()[:8]}.txt"
@@ -1314,9 +1383,10 @@ def cmd_prop(args) -> None:
     noun = args.what or view.segment or view.name or "object"
 
     # Cut it out: SAM 3.1, asked for what Muse called it (or --what).
+    step(f"SAM 3.1 is cutting out the {noun}")
     sam_file = out / f"{stem}_sam_{re.sub(r'[^a-z0-9]+', '-', noun.lower()).strip('-')}.txt"
     if sam_file.exists() and not args.fresh:
-        segments = parse_segments(sam_file.read_text(encoding="utf-8"))
+        segments = segments_from_file(sam_file)
     else:
         segments, raw = meta.segment(small, noun)
         sam_file.write_text(raw, encoding="utf-8")
@@ -1563,6 +1633,27 @@ def build_parser() -> argparse.ArgumentParser:
     prop.add_argument("--json", action="store_true", help="machine-readable output")
     prop.set_defaults(func=cmd_prop)
 
+    obj = sub.add_parser("object", help="an object from one photo or a walk round it (the rebuild: quick)")
+    obj.add_argument("photo", nargs="+", help="its photos; the first is its front")
+    obj.add_argument("--what", help="what it is (else Muse says)")
+    obj.add_argument("--height", type=float, help="its height in metres (else Muse guesses)")
+    obj.add_argument("--width", type=float, help="its width in metres (else Muse guesses)")
+    obj.add_argument("--round", action="store_true", help="it's round: the same from every side")
+    obj.add_argument("--symmetric", action="store_true", help="its left and right match (one photo: a drawn side "
+                                                             "can stand in for the other)")
+    obj.add_argument("--notes", help="what you know that the photos can't show")
+    obj.add_argument("--no-imagine", action="store_true", help="one photo: no Muse Image drawings of its other sides")
+    obj.add_argument("--parts", action="store_true", help="build its own 3D version from shapes Muse describes "
+                                                         "(no photo on it), checked against the photo")
+    obj.add_argument("--moves", type=int, choices=range(0, 7), metavar="0-6",
+                     help="times Muse may look at a model built from parts over the photos and correct it (default 3)")
+    obj.add_argument("--views", help="where each photo was taken, as JSON: {\"IMG_2.HEIC\": -90, \"IMG_3.HEIC\": "
+                                     "\"above\"} (degrees round from the first photo, the front, walking right "
+                                     "positive; \"above\" from over it); else worked out")
+    obj.add_argument("--out", default="out", help="it goes in <out>/objects/<first photo> (default out/)")
+    obj.add_argument("--json", action="store_true", help="machine-readable output")
+    obj.set_defaults(func=cmd_object)
+
     pack = sub.add_parser("pack", help="gather built buildings and props into one place pack for a game")
     pack.add_argument("name", help="the pack's name, e.g. home")
     pack.add_argument("folders", nargs="+", help="folders made by build (out/build/...) and prop (out/props/...)")
@@ -1582,15 +1673,137 @@ def build_parser() -> argparse.ArgumentParser:
                                            "game showing it); the last line has done: true")
     survey.add_argument("--pack-to", help="copy the finished pack into this folder (a game's packs folder), named "
                                           "after the photos' folder")
+    survey.add_argument("--parent-pid", type=int, help="stop when this process (the game that started it) ends")
+    survey.add_argument("--kind", choices=["object", "building"],
+                        help="what the photos show, if you know: the agent skips looking and builds it straight away")
     survey.set_defaults(func=cmd_survey)
+
+    studio = sub.add_parser("studio", help="a page in your browser: drop photos, make the 3D object, turn it round")
+    studio.add_argument("--port", type=int, default=8765, help="on http://127.0.0.1:<port> (default 8765)")
+    studio.add_argument("--out", default="out", help="makes go in <out>/studio/ (default out/)")
+    studio.add_argument("--no-browser", action="store_true", help="don't open the browser")
+    studio.set_defaults(func=cmd_studio)
     return p
+
+
+def cmd_studio(args) -> None:
+    from .studio import serve
+
+    serve(Path(args.out), args.port, open_browser=not args.no_browser)
+
+
+def _views(text: str | None, as_json: bool) -> dict | None:
+    """--views: {photo file name: degrees round from the front, or "above"}."""
+    if not text:
+        return None
+    try:
+        views = json.loads(text)
+    except ValueError:
+        _fail("--views must be JSON, like {\"IMG_2.HEIC\": -90}", as_json)
+    if not isinstance(views, dict) or not all(v == "above" or isinstance(v, (int, float)) for v in views.values()):
+        _fail("--views: each photo's place is degrees round from the front, or \"above\"", as_json)
+    return views
+
+
+def cmd_object(args) -> None:
+    """objects.make_object: the rebuilt object maker."""
+    import time
+
+    from . import objects
+    from .meta import MetaClient, MissingKeyError, usage_since
+    from .objects import ObjectFailed, make_object
+
+    if args.moves is not None:
+        objects.SIGHT_MOVES = args.moves
+    started = time.time()
+    try:
+        meta = MetaClient()
+    except MissingKeyError as e:
+        _fail(str(e), args.json)
+    out = Path(args.out) / "objects" / Path(args.photo[0]).stem
+    try:
+        made = make_object(args.photo, out, meta, notes=args.notes, what=args.what, height=args.height,
+                           width=args.width, round_=True if args.round else None, imagine=not args.no_imagine,
+                           symmetric=True if args.symmetric else None, from_parts=args.parts,
+                           views=_views(args.views, args.json))
+    except ObjectFailed as e:
+        _fail(str(e), args.json)
+    result = {**made.as_dict(), "cost": usage_since(started), "seconds": round(time.time() - started)}
+    if args.json:
+        print(json.dumps(result))
+        return
+    print(f"OBJECT    {made.name} ({made.shape}), {made.size_m[0]} x {made.size_m[1]} x {made.size_m[2]} m "
+          f"(wide, deep, tall), from {len(made.photos_used)} photo(s)")
+    for line in made.notes:
+        print(f"  {line}")
+    for w in made.warnings:
+        print(f"WARNING   {w}")
+    where = made.location
+    print(f"where:    {where['lat']}, {where['lon']}, facing {where['facing_bearing']:.0f}°" if where
+          else "where:    not on the map (small enough to carry, or no GPS/compass): it waits in your things")
+    print(f"model:    {made.model}  (view: {out / 'view.html'})")
+    c = result["cost"]
+    print(f"cost:     ~${c['meta_usd']:.4f} paid Meta ({c['meta_calls']} calls); Spark Open {c['open_calls']} calls; "
+          f"{result['seconds']} s")
+
+
+def _quick_object(args, folder: Path, out: Path, tell) -> None:
+    """survey --kind object: no agent, straight to the object maker, then a pack (the game's quick path)."""
+    import shutil
+    import time
+
+    from .meta import MetaClient, usage_since
+    from .objects import ObjectFailed, make_object
+    from .pack import write_pack
+    from .survey import PHOTO_TYPES
+
+    started = time.time()
+    photos = sorted(str(p) for p in folder.iterdir() if p.suffix.lower() in PHOTO_TYPES)
+    notes = args.notes or (Path(args.notes_file).read_text(encoding="utf-8") if args.notes_file else None)
+    tell({"tool": "prop", "about": f"{len(photos)} photo(s)", "heavy": True})
+    from .meta import PaidCallBlocked
+
+    try:
+        made = make_object(photos, out / "object", MetaClient(), notes=notes)
+    except (ObjectFailed, PaidCallBlocked, Exception) as e:  # (the game is told why, whatever it was)
+        why = (f"paid Meta calls are off, and SAM 3.1 is needed to cut it out of new photos ({e})"
+               if isinstance(e, PaidCallBlocked) else str(e) if isinstance(e, ObjectFailed)
+               else f"{type(e).__name__}: {e}")
+        tell({"tool": "prop", "ok": False, "error": why})
+        tell({"done": True, "error": why, "cost": usage_since(started), "seconds": round(time.time() - started)})
+        if not isinstance(e, (ObjectFailed, PaidCallBlocked)):
+            raise
+        return
+    tell({"tool": "prop", "ok": True})
+    tell({"tool": "pack", "about": folder.name, "heavy": True})
+    write_pack(out / "pack" / folder.name, folder.name, [made.folder], [Path(p).name for p in photos])
+    pack = out / "pack" / folder.name
+    if args.pack_to:
+        pack = shutil.copytree(pack, Path(args.pack_to) / folder.name, dirs_exist_ok=True)
+    tell({"tool": "pack", "ok": True})
+    summary = (f"Made the {made.name}: {made.size_m[0]} m wide, {made.size_m[1]} m deep, {made.size_m[2]} m tall, "
+               f"from {len(made.photos_used)} of {len(photos)} photos ({made.shape}).")
+    if made.warnings:
+        summary += " Next time: " + "; ".join(made.warnings) + "."
+    tell({"done": True, "summary": summary, "questions": [], "pack": str(pack),
+          "built": [{"kind": "prop", "name": made.name}], "cost": usage_since(started),
+          "seconds": round(time.time() - started)})
+    print(summary)
 
 
 def cmd_survey(args) -> None:
     """The survey agent (survey.py): Muse Spark Open turns a folder of photos into a place pack by itself."""
-    from .meta import MetaClient, MissingKeyError
+    import time
+
+    from .meta import MetaClient, MissingKeyError, usage_since
+    from .progress import ENV as PROGRESS_ENV
     from .survey import Survey, open_chat, open_describe, run_cli
 
+    started = time.time()
+    if args.parent_pid:
+        from .progress import stop_with
+
+        stop_with(args.parent_pid)
     folder = Path(args.folder)
     if not folder.is_dir():
         _fail(f"no folder {folder}")
@@ -1606,12 +1819,33 @@ def cmd_survey(args) -> None:
             with open(args.progress, "a", encoding="utf-8") as f:
                 f.write(json.dumps(event) + "\n")
 
-    survey = Survey(folder, open_chat(meta), run_cli, open_describe(meta, out), out, notes=notes, progress=tell)
+    if args.progress:  # the commands it runs add their own steps ("cutting out ... photo 3 of 9") to the same file
+        os.environ[PROGRESS_ENV] = str(Path(args.progress).resolve())
+    if args.kind is None:  # one quick look at the first photo: a teddy bear needs no agent
+        from .survey import first_look
+
+        tell({"tool": "describe", "about": "a first look", "heavy": False})
+        try:
+            look = first_look(meta, folder, out)
+        except Exception as e:  # (no first look: the agent works it out)
+            look, why = None, f"{type(e).__name__}: {e}"
+        else:
+            why = None
+        tell({"tool": "describe", "ok": True} if why is None else {"tool": "describe", "ok": False, "error": why})
+        if look:
+            print(f"first look: {look['what']} ({look['kind']}, {look['sure']:.0%} sure, {look['photo']})")
+            args.kind = look["kind"]
+    if args.kind == "object":  # the person said, or the first look saw, what it is: no agent needed
+        _quick_object(args, folder, out, tell)
+        return
+    survey = Survey(folder, open_chat(meta), run_cli, open_describe(meta, out), out, notes=notes, progress=tell,
+                    kind=args.kind)
     try:
         summary = survey.go(args.max_steps)
     except Exception as e:  # the game waiting on --progress hears about it
-        tell({"done": True, "error": f"{type(e).__name__}: {e}"})
+        tell({"done": True, "error": f"{type(e).__name__}: {e}", "cost": usage_since(started)})
         raise
+    cost = usage_since(started)  # (from the usage logs, so the commands it ran count too)
     pack = survey.work / "pack" / survey.pack if survey.pack else None
     if pack and args.pack_to:
         import shutil
@@ -1619,7 +1853,8 @@ def cmd_survey(args) -> None:
         # (named after the photos' folder, not what the agent called it, so it can't land on another pack)
         pack = shutil.copytree(pack, Path(args.pack_to) / folder.name, dirs_exist_ok=True)
     tell({"done": True, "summary": summary, "questions": survey.questions, "pack": str(pack) if pack else None,
-          "built": [{"kind": k, "name": w} for k, _, w in survey.built]})
+          "built": [{"kind": k, "name": w} for k, _, w in survey.built], "cost": cost,
+          "seconds": round(time.time() - started)})
     print()
     print(summary)
     print()
@@ -1627,6 +1862,9 @@ def cmd_survey(args) -> None:
         print(f"QUESTION  {q}")
     if pack:
         print(f"pack:     {pack}")
+    print(f"cost:     ~${cost['meta_usd']:.4f} paid Meta API ({cost['meta_calls']} calls); Spark Open "
+          f"{cost['open_calls']} calls, {cost['open_tokens']:,} tokens (free Baseten credits); "
+          f"{time.time() - started:.0f} s")
     print(f"log:      {out / 'summary.md'} (every step: {out / 'transcript.json'})")
 
 
@@ -1637,8 +1875,14 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     if args.home:
         os.chdir(args.home)
+    from .meta import PaidCallBlocked
+
     try:
-        args.func(args)
+        try:
+            args.func(args)
+        except PaidCallBlocked as e:  # said plainly, not as a traceback (the game shows it to the player)
+            raise Failed(f"this needs a paid Meta call that's switched off: {e}. Allow paid Meta calls (in the game: "
+                         "the tick box under F7) or use photos made before") from e
     except Failed as e:
         if getattr(args, "json", False):
             print(json.dumps({"error": e.msg}))

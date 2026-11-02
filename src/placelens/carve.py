@@ -39,7 +39,8 @@ WALK = {"front": 0, "front-left": -45, "left": -90, "back-left": -135, "back": 1
 SIDE_PROMPT = """Both photos show the same object, photo 1 from its front. Walking round the object, which side of \
 it does photo 2 show? Answer one of "front", "front-left", "left", "back-left", "back", "back-right", "right", \
 "front-right", where left means walking round to your left from where photo 1 was taken; or "above" if photo 2 \
-looks down on it from over the top. Use its shape and markings, and what's behind it, to tell.
+looks down on it from over the top. Use the object's own shape and markings to tell: the photos may have been \
+taken by turning the object round in place, so what's behind it may not change.
 
 Answer in JSON only: {"side": "...", "confidence": 0.0 to 1.0}"""
 
@@ -96,6 +97,15 @@ def place_shots(shots: list[Shot], height: float) -> None:
         s.centre = ((cols[0] + cols[-1]) / 2, (rows[0] + rows[-1]) / 2)
 
 
+def _away(s: Shot) -> np.ndarray:
+    """Each pixel's distance to the cut-out, worked out once per photo: fitting carves hundreds of times and the
+    cut-out never changes (this was most of a teddy's 2 minutes of carving, 1 Nov)."""
+    key = id(s.mask)
+    if getattr(s, "_away_key", None) != key:
+        s._away, s._away_key = ndimage.distance_transform_edt(~s.mask), key
+    return s._away
+
+
 def carve(shots: list[Shot], size: tuple[float, float, float], misses: int = 1,
           resolution: int = RESOLUTION) -> tuple[np.ndarray, np.ndarray, float]:
     """The block of space kept: points inside the silhouette in all but `misses` of the side photos (a photo whose
@@ -125,7 +135,7 @@ def carve(shots: list[Shot], size: tuple[float, float, float], misses: int = 1,
             mask = ndimage.binary_dilation(mask, iterations=max(1, int(IMAGINED_SLACK * (rows_[-1] - rows_[0]))))
         inside[framed] = mask[r[framed], c[framed]]
         if not s.imagined and not s.overhead:
-            away = ndimage.distance_transform_edt(~s.mask)
+            away = _away(s)
             clear[framed] |= away[r[framed], c[framed]] > CLEAR * h
         # Off an edge the object runs off, this photo can't tell: don't carve there.
         left, right = s.mask[:, :BORDER].any(), s.mask[:, -BORDER:].any()

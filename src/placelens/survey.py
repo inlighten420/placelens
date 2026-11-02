@@ -16,6 +16,7 @@ summary.md, written for a person. Its commands write into out/survey/<folder>/wo
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import subprocess
@@ -41,13 +42,13 @@ unless you must.
 How to work:
 1. list_photos first. Photos taken close together in place and time usually show one thing; the groups it offers \
 are a starting point, not a rule.
-2. describe one or two photos of each group to learn what it is (a building, part of one, or an object), and any \
-photo that doesn't seem to fit its group. Not every photo: a group of the same object needs one look. You have a \
-few looks, not one per photo.
+2. describe to learn what each group is (a building, part of one, or an object). describe takes up to 4 photos in \
+one look: give it one or two photos from each group (and any photo that doesn't seem to fit its group) in ONE call, \
+not one call per photo. A group of the same object needs one photo looked at. You have a few looks, not one per \
+photo.
 3. Buildings: one build call with every photo of that building, even if list_photos put them in different groups \
 (the front from the street and the back are one building). It picks the building in each photo itself and uses \
-the ones that agree, so don't call pick first; pick is only for answering a question about one photo. Use \
-refine=true when 3 or more photos see the building from the street.
+the ones that agree, so don't call pick first; pick is only for answering a question about one photo.
 4. Objects: one prop call per object, with every photo of it (a walk round it carves its real shape). Give `what` \
 as describe named it.
 5. When a tool fails or asks which building it is, don't retry it with small changes and don't guess: note it with \
@@ -70,8 +71,11 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "describe",
-        "description": "Look at one photo: is it a building, part of one (which part), or an object (what)?",
-        "parameters": {"type": "object", "properties": {"photo": {"type": "string"}}, "required": ["photo"]}}},
+        "description": "Look at up to 4 photos at once: is each a building, part of one (which part), or an object "
+                       "(what)? One look, however many photos.",
+        "parameters": {"type": "object", "properties": {"photos": {"type": "array", "items": {"type": "string"},
+                                                                   "maxItems": 4}},
+                       "required": ["photos"]}}},
     {"type": "function", "function": {
         "name": "pick",
         "description": "Which mapped building one photo shows (SAM 3.1 outline + Muse + map geometry).",
@@ -81,7 +85,6 @@ TOOLS = [
         "description": "Build one building from all its photos as a 3D model on the map. Takes minutes.",
         "parameters": {"type": "object", "properties": {
             "photos": {"type": "array", "items": {"type": "string"}},
-            "refine": {"type": "boolean", "description": "critique loop: corrects the shape against the photos"},
             "building": {"type": "integer",
                          "description": "only with ONE photo: a candidate number from that photo's pick, if the "
                                         "person chose it"},
@@ -123,6 +126,24 @@ DESCRIBE_PROMPT = """What is this photo of? Answer in JSON only:
 "side": for a building or part, which side the camera faces if you can tell ("front", "back", "left", "right", \
 "corner") else null, \
 "whole": true if the whole building or object is in the photo}"""
+
+DESCRIBE_MANY_PROMPT = """These are {n} photos, in order. What is each one of? Answer in JSON only: a list with one \
+entry per photo, in the same order:
+[{{"photo": 1, "kind": "building", "building part" or "object", \
+"what": a short name (e.g. "two-storey house", "back of a house", "rain tank", "teddy bear"), \
+"side": for a building or part, which side the camera faces if you can tell ("front", "back", "left", "right", \
+"corner") else null, \
+"whole": true if the whole building or object is in the photo}}, ...]"""
+DESCRIBE_AT_ONCE = 4  # photos in one look (one Muse call with all of them)
+
+# The person's "what is it?" answer (survey --kind): what the agent is told, and the tools it doesn't get.
+KINDS = {
+    "object": ("The person says these photos show ONE object (not a building). Don't describe or pick: call prop "
+               "straight away with every photo (leave out `what` unless their notes name it: Muse names it), then "
+               "pack.", {"pick", "build"}),
+    "building": ("The person says these photos show ONE building. Don't describe: call build straight away with "
+                 "every photo, then pack.", {"prop"}),
+}
 
 
 def photo_time(path: Path) -> float | None:
@@ -184,7 +205,7 @@ class Survey:
     folder: Path
     chat: Callable
     run: Callable[[list[str]], dict]
-    describe: Callable[[str], str]
+    describe: Callable[[list[str]], str]
     out: Path
     log: Callable = print
     messages: list = field(default_factory=list)
@@ -195,6 +216,13 @@ class Survey:
     replies: Path = Path("out/pick")
     notes: str | None = None  # the person's own words about the photos
     progress: Callable[[dict], None] = lambda event: None  # each tool call as it starts and ends (for a game)
+    kind: str | None = None  # the person said what it is: "object" or "building" (KINDS)
+
+    @property
+    def tools(self) -> list:
+        """The agent's tools, less those the person's "what is it?" rules out."""
+        off = KINDS[self.kind][1] if self.kind else set()
+        return [t for t in TOOLS if t["function"]["name"] not in off]
 
     @property
     def work(self) -> Path:
@@ -205,19 +233,23 @@ class Survey:
         """One tool call. Errors come back as {"error": ...} for the agent to read, not as exceptions."""
         if name == "list_photos":
             return list_photos(self.folder)
+        if name not in {t["function"]["name"] for t in self.tools}:
+            return {"error": f"no tool {name!r}" + (f" here: {KINDS[self.kind][0]}" if self.kind else "")}
         if name == "describe":
             if self.looks >= LOOKS:
                 return {"error": f"no looks left ({LOOKS} used): decide from what you've seen"}
+            photos = args.get("photos") or ([args["photo"]] if args.get("photo") else [])
+            if not photos:
+                return {"error": "describe needs photos"}
             self.looks += 1
-            return {"photo": args["photo"], "answer": self.describe(args["photo"])}
+            photos = photos[:DESCRIBE_AT_ONCE]
+            return {"photos": [Path(p).name for p in photos], "answer": self.describe(photos)}
         out = ["--out", str(self.work)]
         shared = ["--replies", str(self.replies)]  # SAM and Muse answers shared with hand-run commands
         if name == "pick":
             return _brief_pick(self.run(["pick", args["photo"], "--json", *out, *shared]))
         if name == "build":
             argv = ["build", *args["photos"], "--json", *out, *shared]
-            if args.get("refine"):
-                argv.append("--refine")
             if args.get("building") is not None:
                 argv += ["--building", str(args["building"])]
             argv += _settings(args, {"floors": "--floors", "height": "--height", "notes": "--notes"},
@@ -227,11 +259,11 @@ class Survey:
                 self.built.append(("building", result["folder"], result.get("building")))
             return result
         if name == "prop":
-            argv = ["prop", *args["photos"], "--json", *out]
+            if self.kind == "object":  # one object: every photo carves it (the agent once sent 5 of 10)
+                args["photos"] = [p["photo"] for p in list_photos(self.folder)["photos"]]
+            argv = ["object", *args["photos"], "--json", *out]  # (the rebuilt object maker)
             argv += _settings(args, {"what": "--what", "height": "--height", "width": "--width", "notes": "--notes"},
-                              {"symmetric": "--symmetric"})
-            if args.get("round"):
-                argv += ["--shape", "round"]
+                              {"symmetric": "--symmetric", "round": "--round"})
             result = _brief_prop(self.run(argv))
             if result.get("folder"):
                 self.built.append(("prop", result["folder"], result.get("name")))
@@ -251,10 +283,12 @@ class Survey:
         brief = f"The folder: {self.folder}. Make its place pack."
         if self.notes:
             brief += f'\n\nThe person\'s notes: "{self.notes.strip()}"'
+        if self.kind:
+            brief += "\n\n" + KINDS[self.kind][0]
         self.messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": brief}]
         steps = calls_made = 0
         while True:
-            reply = self.chat(self.messages, TOOLS)
+            reply = self.chat(self.messages, self.tools)
             calls = reply.get("tool_calls") or []
             self.messages.append(reply)
             if not calls:
@@ -369,7 +403,8 @@ def _brief_prop(r: dict) -> dict:
     if "error" in r:
         return r
     return {"name": r.get("name"), "folder": str(Path(r["model"]).parent), "size_m": r.get("size_m"),
-            "warnings": r.get("warnings"), "photos": r.get("photos")}
+            "size_order": "wide, deep, tall (metres)", "shape": r.get("shape"), "warnings": r.get("warnings"),
+            "photos": r.get("notes") or r.get("photos")}
 
 
 def run_cli(argv: list[str], timeout: int = 1800) -> dict:
@@ -387,11 +422,21 @@ def open_chat(meta) -> Callable:
     from .meta import OPEN
 
     def chat(messages: list, tools: list) -> dict:
-        r = meta.open_client().chat.completions.create(model=OPEN, messages=messages,
+        import time
+
+        from .meta import MissingKeyError, has_key
+
+        if not has_key("BASETEN_API_KEY"):
+            raise MissingKeyError("the planning agent runs on Muse Spark Open (BASETEN_API_KEY in .env); without it, "
+                                  "say what the photos show: --kind object or --kind building "
+                                  "(in the game: What is it?)")
+        started = time.time()
+        # (low effort: its choices are simple, and a planning call once thought for 116 s)
+        r = meta.open_client().chat.completions.create(model=OPEN, messages=messages, reasoning_effort="low",
                                                        **({"tools": tools} if tools else {}))
         if r.usage:
             meta._add(tokens=r.usage.total_tokens)
-            meta.log_usage(r.usage, 0, None)
+            meta.log_usage(r.usage, 0, None, time.time() - started)
         m = r.choices[0].message
         msg = {"role": "assistant", "content": m.content or ""}
         if m.tool_calls:
@@ -403,19 +448,75 @@ def open_chat(meta) -> Callable:
     return chat
 
 
-def open_describe(meta, out: Path) -> Callable[[str], str]:
-    """A quick look at a photo with Spark Open (3 votes, saved like every Muse answer)."""
+FIRST_LOOK = """Is this photo of a building (or part of one) or of an object (a thing: a toy, a tank, a bench, a \
+statue...)? Answer in JSON only: {"kind": "building" or "object", "what": a few words, "sure": 0.0 to 1.0}"""
+SURE_ENOUGH = 0.7  # a first look this sure decides what the folder is
+FIRST_LOOK_GROUPS = 3  # groups looked at (one photo each, at once); more, and the agent sorts the folder out
+
+
+def first_look(meta, folder: Path, out: Path) -> dict | None:
+    """What a folder of photos shows, from one quick look at its first photo, if the photos are one group (taken
+    together): {"kind", "what", "sure", "photo"}; None if they aren't one group or the look isn't sure. Seeing a
+    teddy bear in the first photo is enough to skip the agent's photo-by-photo looking (1 Nov: 3 minutes)."""
+    import re
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .meta import OPEN
+    from .muse import ask
+    from .pick import prepare_photo
+
+    listed = list_photos(folder)
+    if not listed["photos"] or len(listed["groups"]) > FIRST_LOOK_GROUPS:
+        return None
+    tag = hashlib.sha1(FIRST_LOOK.encode()).hexdigest()[:8]
+
+    def look(group: list[str]) -> dict | None:  # the group's first photo
+        photo = group[0]
+        small = prepare_photo(photo, out / "photos" / f"{Path(photo).stem}.jpg")
+        for a in ask(meta, FIRST_LOOK, small, out / "describe" / f"{Path(photo).stem}_first_{tag}.txt", OPEN,
+                     votes=1, effort="low"):
+            m = re.search(r"\{.*\}", a, re.S)
+            try:
+                d = json.loads(m.group(0)) if m else {}
+            except json.JSONDecodeError:
+                continue
+            if d.get("kind") in ("building", "object") and float(d.get("sure") or 0) >= SURE_ENOUGH:
+                return {"kind": d["kind"], "what": str(d.get("what") or d["kind"]), "sure": float(d["sure"]),
+                        "photo": Path(photo).name}
+        return None
+
+    with ThreadPoolExecutor(len(listed["groups"])) as pool:
+        looks = list(pool.map(look, listed["groups"]))
+    if any(lk is None for lk in looks):
+        return None
+    if len(looks) == 1:
+        return looks[0]
+    # Several groups: one building seen in two sittings is one building (build sorts out which); several objects
+    # may be different things, so the agent sorts those out.
+    return looks[0] if all(lk["kind"] == "building" for lk in looks) else None
+
+
+def open_describe(meta, out: Path) -> Callable[[list[str]], str]:
+    """A quick look at one photo or a few together with Spark Open (one call with them all, 3 votes, saved like
+    every Muse answer). One photo asks exactly as before, so saved looks still count."""
     import hashlib
 
     from .meta import OPEN
     from .muse import ask
     from .pick import prepare_photo
 
-    def describe(photo: str) -> str:
-        stem = Path(photo).stem
-        small = prepare_photo(photo, out / "photos" / f"{stem}.jpg")
-        tag = hashlib.sha1(DESCRIBE_PROMPT.encode()).hexdigest()[:8]
-        answers = ask(meta, DESCRIBE_PROMPT, small, out / "describe" / f"{stem}_open_{tag}.txt", OPEN, votes=3)
+    def describe(photos: list[str] | str) -> str:
+        photos = [photos] if isinstance(photos, str) else list(photos)
+        smalls = [prepare_photo(p, out / "photos" / f"{Path(p).stem}.jpg") for p in photos]
+        if len(photos) == 1:
+            prompt, name = DESCRIBE_PROMPT, Path(photos[0]).stem
+        else:
+            prompt = DESCRIBE_MANY_PROMPT.format(n=len(photos))
+            which = hashlib.sha1("|".join(Path(p).name for p in photos).encode()).hexdigest()[:6]
+            name = f"{Path(photos[0]).stem}_{len(photos)}_{which}"
+        tag = hashlib.sha1(prompt.encode()).hexdigest()[:8]
+        answers = ask(meta, prompt, smalls[0] if len(smalls) == 1 else smalls,
+                      out / "describe" / f"{name}_open_{tag}.txt", OPEN, votes=3)
         return " | ".join(a.strip() for a in answers)
 
     return describe
