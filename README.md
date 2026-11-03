@@ -9,7 +9,7 @@ A building goes on its real spot on the real map, in place of the map's grey box
 and the map do the free work; Meta's models answer only what sensors can't: what is it, how big, which floors, what
 roof. And every model answer is checked against geometry before it's used.
 
-<!-- TODO before submitting: demo video link here -->
+**▶ [Watch the 3-minute demo](https://youtu.be/FGEI_P3rk2w)**
 
 Built for the Meta Global AI Developer Hackathon (26 Oct – 4 Nov 2026), theme *Build for Your World*. Everything in
 this repo was built during the hackathon. The game it plugs into, [Open-Planet](https://github.com/inlighten420/open-planet)
