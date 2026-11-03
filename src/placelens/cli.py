@@ -644,6 +644,7 @@ def _roof(args, used: list[dict], footprint, height: float):
     """The roof plan: Muse looks at each photo's roof (one small call per photo, saved like pick's), the photos vote,
     and --roof / --pitch overrule. Returns the plan, the ridges' compass bearing and where the answer came from."""
     import hashlib
+    from concurrent.futures import ThreadPoolExecutor
 
     from .muse import ask, noted
     from .roof import ROOF_PROMPT, combine, parse_roof, plan_roof
@@ -651,12 +652,18 @@ def _roof(args, used: list[dict], footprint, height: float):
     views = []
     prompt = noted(ROOF_PROMPT, args.notes)
     asked = hashlib.sha1(prompt.encode()).hexdigest()[:8]
+
+    def look(r: dict) -> list:
+        ctx = r["ctx"]
+        reply = ctx["replies"] / f"{ctx['stem']}_{args.model}_roof_{asked}.txt"
+        return [(parse_roof(a), ctx["heading"])  # each vote is one more look at the roof
+                for a in ask(ctx["meta"], prompt, ctx["small"], reply, ctx["model"], ctx["votes"], ctx["fresh"])]
+
     if not (args.roof and args.pitch):
-        for r in used:
-            ctx = r["ctx"]
-            reply = ctx["replies"] / f"{ctx['stem']}_{args.model}_roof_{asked}.txt"
-            for answer in ask(ctx["meta"], prompt, ctx["small"], reply, ctx["model"], ctx["votes"], ctx["fresh"]):
-                views.append((parse_roof(answer), ctx["heading"]))  # each vote is one more look at the roof
+        # Several photos at once, as the sides are (one after another, a 10-photo house waited 5 minutes here, 2 Nov)
+        with ThreadPoolExecutor(BUILD_PARALLEL) as pool:
+            for found in pool.map(look, used):
+                views += found
     kind, pitch, ridge = combine(views) if views else ("flat", 30.0, None)
     source = f"Muse, {len(used)} photo(s), {len(views)} answer(s)" if views else "you"
     if args.roof or args.pitch:
@@ -1537,7 +1544,7 @@ def cmd_pack(args) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="placelens",
-        description="Photo of a real place in, the real building on the real map out.",
+        description="Phone photos in, 3D buildings and objects at real size on the real map out.",
     )
     p.add_argument("--version", action="version", version=f"placelens {__version__}")
     p.add_argument("-C", dest="home", metavar="DIR",

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "placelens"
 version = "0.1.0"
-description = "Photo of a real place in, the real building on the real map out."
+description = "Phone photos of real buildings and objects in, game-ready 3D models at real size on the real map out (SAM 3.1 + Muse)."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -43,3 +43,9 @@ src = ["src", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    # scikit-image's marching cubes sets ndarray.shape, which NumPy 2.5 deprecates; not our code
+    "ignore:Setting the shape on a NumPy array:DeprecationWarning:skimage",
+]

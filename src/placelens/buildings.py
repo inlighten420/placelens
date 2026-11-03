@@ -1,4 +1,4 @@
-"""A building from phone photos, rebuilt (REBUILD.md step 3). This part: which building the photos show.
+"""A building from phone photos: which building the photos show.
 
 All the photos together, by triangulation. Each photo is a line on the map: from where it was taken (its GPS), in the
 direction of the building's middle (its compass, and where SAM 3.1 found the building across the photo), out to about

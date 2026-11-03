@@ -1,6 +1,6 @@
 """An object (a teddy bear, a water tank, a bench) from phone photos: a 3D model at its real size, on the map.
 
-The rebuild's rules (REBUILD.md): the phone's own readings first, the AI only for what they can't tell, each
+The rules: the phone's own readings first, the AI only for what they can't tell, each
 question asked once, nothing slow waited on for long, and no one failure losing the make.
 
 1. Photos: up to MAX_PHOTOS of them, chosen to be spread evenly round the object by their compass.
