@@ -16,6 +16,9 @@ this repo was built during the hackathon. The game it plugs into, [Open-Planet](
 (a driving game of the real world), existed before and is not part of this entry; PlaceLens is an add-on for it,
 and its place packs can be read by any engine.
 
+![Five things PlaceLens made from phone photos: a teddy bear, an office chair, a sim-racing steering wheel, an aloe plant and a sugar skull](docs/examples.png)
+*Made from 3 to 6 phone photos each, with Find its parts. Spin them round yourself: [`examples/`](examples).*
+
 **Technical deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**, covering every model call, every algorithm and
 every trade-off.
 
@@ -244,14 +247,16 @@ src/placelens/        the package (one module per job; see the module map in doc
   pick.py, buildings.py, sides.py, front.py, roof.py, critique.py, look.py, build.py   buildings
   objects.py, carve.py, soft.py, align.py, flat.py, seen.py, imagine.py, parts.py, fit.py,
   sight.py, prop.py                                                                   objects
+  judge.py, dress.py, solve.py   first-generation object experiments, kept for comparison
   survey.py             the tool-calling agent
   studio.py, studio.html  the local web app
-  pack.py, viewer.py    place packs, view.html
+  pack.py, viewer.py, render.py   place packs, view.html, map pictures
+  progress.py           step-by-step progress for the game and the studio
   cli.py                every command
 adapters/godot/       the Open-Planet add-on (installer + 4 GDScript files)
 tests/                174 offline tests (pytest), one file per module
 scripts/              probes and evaluations used while building (see scripts/README.md)
-docs/                 ARCHITECTURE.md, and the day-one plan for comparison
+docs/                 ARCHITECTURE.md, the day-one plan for comparison, and the examples picture
 examples/             five finished models (prop.glb + view.html), shown in the studio on first start
 ```
 

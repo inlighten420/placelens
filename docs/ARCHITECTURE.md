@@ -680,12 +680,12 @@ and SIFT matching.
 | [`roof.py`](../src/placelens/roof.py) | 236 | Footprint → blocks → gable / hip / flat roofs |
 | [`critique.py`](../src/placelens/critique.py) | 508 | Muse-proposed, outline-verified shape edits |
 | [`look.py`](../src/placelens/look.py) | 46 | Colours of walls, roof, frames, doors |
-| [`build.py`](../src/placelens/build.py) | 500 | Meshes (walls with real openings, roofs) and the glTF writer |
+| [`build.py`](../src/placelens/build.py) | 528 | Meshes (walls with real openings, roofs) and the glTF writer |
 | **Objects** | | |
 | [`objects.py`](../src/placelens/objects.py) | 970 | The object pipeline end to end |
 | [`carve.py`](../src/placelens/carve.py) | 384 | Visual hull, camera refinement, marching cubes, painting |
 | [`imagine.py`](../src/placelens/imagine.py) | 29 | Muse Image prompts for unseen sides |
-| [`parts.py`](../src/placelens/parts.py) | 264 | Muse's parts list → meshes; outline check |
+| [`parts.py`](../src/placelens/parts.py) | 267 | Muse's parts list → meshes; outline check |
 | [`fit.py`](../src/placelens/fit.py) | 334 | Parts fitted into the carving |
 | [`sight.py`](../src/placelens/sight.py) | 278 | Self-check loop scored by mean IoU |
 | [`prop.py`](../src/placelens/prop.py) | 239 | Extruded cut-outs, lathe, map placement |
@@ -695,9 +695,9 @@ and SIFT matching.
 | [`seen.py`](../src/placelens/seen.py) | 91 | Pictures of what the models saw, per make |
 | [`judge.py`](../src/placelens/judge.py), [`dress.py`](../src/placelens/dress.py), [`solve.py`](../src/placelens/solve.py) | 984 | First-generation `prop` experiments (§12) |
 | **Orchestration and outputs** | | |
-| [`cli.py`](../src/placelens/cli.py) | 1,895 | Every command; `--json`; the building pipeline |
+| [`cli.py`](../src/placelens/cli.py) | 1,907 | Every command; `--json`; the building pipeline |
 | [`survey.py`](../src/placelens/survey.py) | 522 | The tool-calling agent |
-| [`studio.py`](../src/placelens/studio.py) + [`studio.html`](../src/placelens/studio.html) | 620 + page | Local web app |
+| [`studio.py`](../src/placelens/studio.py) + [`studio.html`](../src/placelens/studio.html) | 657 + page | Local web app |
 | [`pack.py`](../src/placelens/pack.py) | 87 | Place packs |
 | [`viewer.py`](../src/placelens/viewer.py), [`render.py`](../src/placelens/render.py) | 140 | `view.html`, map pictures |
 | [`progress.py`](../src/placelens/progress.py) | 74 | JSON-lines progress for the game and studio |

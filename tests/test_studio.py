@@ -301,7 +301,7 @@ def test_what_the_models_saw_is_listed_and_served_and_nothing_else(tmp_path):
     thing = next(t for t in s.things() if t["id"].endswith("IMG_1/prop.glb"))
     assert thing["seen"] == ["IMG_1_outline.jpg", "IMG_1_parts.jpg", "IMG_1_fit.jpg"]  # outline, parts, then fit
     assert s.seen(thing["id"], "IMG_1_parts.jpg").read_bytes().endswith(b"IMG_1_parts.jpg")
-    for bad in ("../secret.txt", "..\object.json", "nope.jpg"):
+    for bad in ("../secret.txt", r"..\object.json", "nope.jpg"):
         with pytest.raises(ValueError):
             s.seen(thing["id"], bad)
 
