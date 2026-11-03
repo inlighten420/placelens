@@ -1,0 +1,22 @@
+{
+ "name": "sim racing steering wheel",
+ "model": "prop.glb",
+ "size_m": [
+  0.26,
+  0.07,
+  0.12
+ ],
+ "shape": "parts",
+ "location": null,
+ "photos_used": [
+  "photo 1",
+  "photo 2",
+  "photo 3",
+  "photo 4"
+ ],
+ "notes": [
+  "An example made with PlaceLens from 4 phone photos (not included): 2 min 38 s, 4.5\u00a2 on the Meta API and 7 Muse Spark Open calls (35k tokens) on Baseten."
+ ],
+ "warnings": [],
+ "example": true
+}

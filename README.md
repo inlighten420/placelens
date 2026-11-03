@@ -84,7 +84,7 @@ votes.
   glazing bars, sills), not a photo stretched over a box with trees and cars on it.
 - **Standard outputs.** glTF binary written directly (no Blender), plus a place-pack manifest any engine can read,
   plus a Godot adapter that replaces the map's grey box. [More](docs/ARCHITECTURE.md#8-outputs-gltf-place-packs-the-godot-adapter)
-- **157 offline tests**, no keys needed, run in CI with lint on every push.
+- **159 offline tests**, no keys needed, run in CI with lint on every push.
 
 ## Try it
 
@@ -94,13 +94,19 @@ needs [Python 3.10+](https://www.python.org/downloads/)). Then PlaceLens Studio 
 API key once, drop in photos, press **Make it 3D**, and drag the model round to see every side. Everything runs on
 your own computer; the key is saved in `.env` in that folder.
 
+**See results before you make anything:** [`examples/`](examples) holds four things PlaceLens made: a sugar skull,
+an aloe plant, a teddy bear and a sim-racing steering wheel. Each one has its model (`prop.glb`) and a `view.html`
+you can double-click to spin it round in a browser, no key or install needed. The studio shows them the first time
+it opens, so you can turn them round and send them to the game straight away. Only the finished models are
+included: the photos they were made from stay private.
+
 **The developer way:**
 
 ```sh
 git clone https://github.com/inlighten420/placelens && cd placelens
 python -m venv .venv
 .venv/Scripts/pip install -e ".[dev]"        # .venv/bin/pip on macOS/Linux
-.venv/Scripts/python -m pytest -q            # 157 tests, offline, no keys needed
+.venv/Scripts/python -m pytest -q            # 159 tests, offline, no keys needed
 .venv/Scripts/activate                       # source .venv/bin/activate on macOS/Linux: puts `placelens` on the path
 ```
 
@@ -174,7 +180,7 @@ Baseten. Real makes in the studio, as each make recorded them:
 |---|---|---|---|---|
 | Sugar skull | 3 | 31 s | 0.25¢ (1 call) | 2 calls, 13k tokens |
 | Aloe plant | 4 | 49 s | 1¢ (4 calls) | 6 calls, 34k tokens |
-| Teddy bear | 9 | 1 min 27 s | 1.5¢ (6 calls) | 8 calls, 49k tokens |
+| Teddy bear | 9 (6 used) | 1 min 27 s | 1.5¢ (6 calls) | 8 calls, 49k tokens |
 | Steering wheel | 4 | 2 min 38 s | 4.5¢ (18 calls) | 7 calls, 35k tokens |
 | A house | 10 | 11 min 41 s | 8.5¢ (34 calls) | 127 calls, 904k tokens |
 
@@ -218,9 +224,10 @@ src/placelens/        the package (one module per job; see the module map in doc
   pack.py, viewer.py    place packs, view.html
   cli.py                every command
 adapters/godot/       the Open-Planet add-on (installer + 4 GDScript files)
-tests/                157 offline tests (pytest), one file per module
+tests/                159 offline tests (pytest), one file per module
 scripts/              probes and evaluations used while building (see scripts/README.md)
 docs/                 ARCHITECTURE.md, and the day-one plan for comparison
+examples/             four finished models (prop.glb + view.html), shown in the studio on first start
 ```
 
 ## Honest limits

@@ -24,6 +24,26 @@ PHOTO_TYPES = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp")
 MAX_PHOTO = 40 * 1024 * 1024  # bytes: a phone photo is a few MB
 MAX_PHOTOS = 16
 SHOWN = 60  # things listed, newest first
+EXAMPLES = Path(__file__).resolve().parents[2] / "examples"  # the repo's example models (no photos)
+SEEDED = ".seeded"  # in out/examples/: the examples were copied once; one deleted stays deleted
+
+
+def seed_examples(out: Path, examples: Path = EXAMPLES) -> int:
+    """The repo's example models copied into out/examples/ the first time the studio starts, so a new user sees
+    finished things before making their own. Only once: one the person deletes doesn't come back. Returns how many
+    were copied."""
+    target = Path(out) / "examples"
+    if not examples.is_dir() or (target / SEEDED).exists():
+        return 0
+    copied = 0
+    for src in sorted(p for p in examples.iterdir() if (p / "object.json").is_file()):
+        dst = target / src.name
+        if not dst.exists():
+            shutil.copytree(src, dst)
+            copied += 1
+    target.mkdir(parents=True, exist_ok=True)
+    (target / SEEDED).write_text("examples copied; delete this file to copy them again\n", encoding="utf-8")
+    return copied
 
 
 def _safe(name: str) -> str:
@@ -595,6 +615,7 @@ class _Server(ThreadingHTTPServer):
 
 
 def serve(out: Path, port: int = 8765, open_browser: bool = True) -> None:
+    seed_examples(out)
     studio = Studio(out)
     page = (Path(__file__).parent / "studio.html").read_bytes()
     server = None

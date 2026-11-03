@@ -1,0 +1,21 @@
+{
+ "name": "Day of the Dead sugar skull candle holder",
+ "model": "prop.glb",
+ "size_m": [
+  0.12,
+  0.14,
+  0.16
+ ],
+ "shape": "carved",
+ "location": null,
+ "photos_used": [
+  "photo 1",
+  "photo 2",
+  "photo 3"
+ ],
+ "notes": [
+  "An example made with PlaceLens from 3 phone photos (not included): 31 s, 0.25\u00a2 on the Meta API and 2 Muse Spark Open calls (13k tokens) on Baseten."
+ ],
+ "warnings": [],
+ "example": true
+}

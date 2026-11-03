@@ -494,7 +494,7 @@ not sure which building it is.
 
 ## 11. Testing
 
-157 tests in [`tests/`](../tests), **offline and keyless**: they run in about 20 s and in CI on every push
+159 tests in [`tests/`](../tests), **offline and keyless**: they run in about 20 s and in CI on every push
 ([`.github/workflows/test.yml`](../.github/workflows/test.yml), with `ruff` lint as well).
 
 - **API layer:** a real SAM 3.1 reply ([`tests/data/sam_city_hall.txt`](../tests/data/sam_city_hall.txt), of a

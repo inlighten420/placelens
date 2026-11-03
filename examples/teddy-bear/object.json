@@ -1,0 +1,24 @@
+{
+ "name": "large blue plush teddy bear",
+ "model": "prop.glb",
+ "size_m": [
+  0.62,
+  0.55,
+  0.63
+ ],
+ "shape": "carved",
+ "location": null,
+ "photos_used": [
+  "photo 1",
+  "photo 2",
+  "photo 3",
+  "photo 4",
+  "photo 5",
+  "photo 6"
+ ],
+ "notes": [
+  "An example made with PlaceLens from 6 phone photos (not included): 1 min 27 s, 1.5\u00a2 on the Meta API and 8 Muse Spark Open calls (49k tokens) on Baseten."
+ ],
+ "warnings": [],
+ "example": true
+}

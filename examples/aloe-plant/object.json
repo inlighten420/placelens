@@ -1,0 +1,22 @@
+{
+ "name": "potted aloe plant",
+ "model": "prop.glb",
+ "size_m": [
+  0.11,
+  0.12,
+  0.21
+ ],
+ "shape": "carved",
+ "location": null,
+ "photos_used": [
+  "photo 1",
+  "photo 2",
+  "photo 3",
+  "photo 4"
+ ],
+ "notes": [
+  "An example made with PlaceLens from 4 phone photos (not included): 49 s, 1\u00a2 on the Meta API and 6 Muse Spark Open calls (34k tokens) on Baseten."
+ ],
+ "warnings": [],
+ "example": true
+}

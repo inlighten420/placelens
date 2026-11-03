@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from placelens.studio import Studio, _safe
+from placelens.studio import EXAMPLES, Studio, _safe, seed_examples
 
 
 def test_photo_names_stay_in_their_folder():
@@ -262,3 +262,25 @@ def test_a_step_split_by_one_beside_it_stays_one(tmp_path):
               ("SAM 3.1 is cutting out the pot: photo 4 of 4", 35), ("carving the pot from 4 cut-outs", 45)]
     (job / "progress.jsonl").write_text("\n".join(json.dumps({"detail": d, "time": 1000.0 + s}) for d, s in events))
     assert [s["detail"][:12] for s in _story(job)["steps"]] == ["SAM 3.1 is c", "Muse checks ", "carving the "]
+
+
+def test_examples_are_copied_once_and_listed(tmp_path):
+    import shutil
+
+    ex = tmp_path / "examples" / "pot"
+    ex.mkdir(parents=True)
+    (ex / "object.json").write_text(json.dumps({"name": "pot", "model": "prop.glb", "size_m": [1, 1, 1]}))
+    (ex / "prop.glb").write_bytes(b"glb")
+    out = tmp_path / "out"
+    assert seed_examples(out, tmp_path / "examples") == 1
+    assert [t["name"] for t in Studio(out).things()] == ["pot"]
+    shutil.rmtree(out / "examples" / "pot")  # the person deletes it: it stays deleted
+    assert seed_examples(out, tmp_path / "examples") == 0
+    assert Studio(out).things() == []
+
+
+def test_the_shipped_examples_have_no_photos_or_places():
+    for folder in (p for p in EXAMPLES.iterdir() if p.is_dir()):
+        assert sorted(f.name for f in folder.iterdir()) == ["object.json", "prop.glb", "view.html"]
+        made = json.loads((folder / "object.json").read_text(encoding="utf-8"))
+        assert made["location"] is None and made["example"] is True
