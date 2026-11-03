@@ -162,3 +162,44 @@ def test_sides_asked_while_cutting_out_are_used_not_asked_again(monkeypatch, tmp
              "back.HEIC": merge_sides([parse_side('{"side": "back", "confidence": 0.9}')])}
     objects._angles(None, photos, tmp_path, early)
     assert [p.angle for p in photos[1:]] == [90, 180]
+
+
+def test_a_flat_thing_is_built_from_its_outline_not_pasted(tmp_path, monkeypatch):
+    """A steering wheel: wide face on, a sliver side on. It's built from the face's outline (holes and all) as solid
+    cells painted from the photo, and a button SAM finds stands proud of its face; no picture is laid on it."""
+    import numpy as np
+    from PIL import Image
+
+    from placelens import flat, soft
+    from placelens.flat import squareness
+    from placelens.objects import Photo
+
+    def photo(name, width):
+        mask = np.zeros((400, 600), bool)
+        mask[150:250, 300 - width // 2:300 + width // 2] = True
+        mask[180:220, 300 - width // 2 + 10:300 - width // 2 + 40] = False  # (a hand hole)
+        small = tmp_path / f"{name}.jpg"
+        pixels = np.full((400, 600, 3), 40, np.uint8)
+        pixels[190:206, 330:346] = (240, 240, 240)  # (a white button)
+        Image.fromarray(pixels).save(small)
+        ph = Photo(tmp_path / f"{name}.HEIC", small, None, None, None, 60.0)
+        ph.mask = mask
+        return ph
+
+    face, edge = photo("face", 300), photo("edge", 30)
+    edge.angle = 90.0  # (side on: no photo of its back)
+    assert max([edge, face], key=squareness) is face
+    button = np.zeros((400, 600), bool)
+    button[190:206, 330:346] = True
+    monkeypatch.setattr(soft, "_sam_masks", lambda meta, small, noun, out: [button] if noun == "button" else [])
+    parts, note = flat.built(None, [face, edge], 0.3, 0.05, 0.1, tmp_path)
+    body = parts[0]
+    assert body.texture is None and body.colors is not None  # painted, not pasted
+    span = body.positions.max(axis=0) - body.positions.min(axis=0)
+    assert abs(span[1] - 0.1) < 0.005 and abs(span[2] - 0.05) < 0.005 and abs(span[0] - 0.3) < 0.02
+    x, y, z = body.positions[:, 0], body.positions[:, 1], body.positions[:, 2]
+    hole = (x > -0.135) & (x < -0.115) & (np.abs(y - 0.05) < 0.01) & (z > 0.02)
+    assert not hole.any()  # (nothing on the front face where the hand hole is)
+    assert len(parts) == 2 and "1 button" in note
+    assert parts[1].positions[:, 2].max() > 0.025 + 0.005  # the button stands proud of the face
+    assert parts[1].color[0] > 0.8  # white, from the photo

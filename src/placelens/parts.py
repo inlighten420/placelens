@@ -44,10 +44,13 @@ z towards the camera; the object centred on x = 0, z = 0. Each shape is 1 m acro
 turned by "turn" [x, y, z] degrees, then moved so its centre is at "at". Shapes: "box", "cylinder" (round in x \
 and z, along y), "sphere", "cone" (point up), "wedge" (a ramp: high at -z, low at +z), "tube" (a hollow cylinder). \
 Colours as the real thing's, "#rrggbb". Finish: "matte", "plastic", "rubber", "metal", "wood" or "glass". At most \
-{max_parts} shapes. Leave openings open: don't fill the gap between a wheel's grips, or under a table.
+{max_parts} shapes. Leave openings open: don't fill the gap between a wheel's grips, or under a table. Name each \
+shape in "what" with the everyday word anyone would use to point at that part in a photo ("backrest", "seat", \
+"armrest", "handle", "grip", "button", "leg", "wheel"), not what it's made of; add left, right, front or back when \
+there are several.
 
 Answer in JSON only: {{"parts": [{{"shape": "box", "at": [x, y, z], "size": [x, y, z], "turn": [0, 0, 0], \
-"colour": "#222222", "finish": "plastic", "what": "centre plate"}}, ...]}}"""
+"colour": "#222222", "finish": "plastic", "what": "left handle"}}, ...]}}"""
 
 FIX_PROMPT = """These are the shapes you described for the object in photo 1:
 {parts}

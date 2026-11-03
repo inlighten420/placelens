@@ -74,6 +74,13 @@
                      border-radius: 8px; padding: 8px 10px; font: inherit; margin-top: 6px; }
   input[type=text]:focus, input[type=password]:focus { outline: none; border-color: var(--accent); }
   .moves { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+  .story-seen { margin-top: 18px; }
+  .story-seen h3 { margin: 0 0 4px; font-size: 14px; }
+  .story-seen p { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; max-width: 70ch; }
+  .seen-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .seen-grid figure { margin: 0; }
+  .seen-grid img { width: 100%; border-radius: 6px; display: block; cursor: zoom-in; }
+  .seen-grid figcaption { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
   .moves small { color: var(--muted); font-size: 11.5px; }
   .moves select { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
                   padding: 3px 6px; font: inherit; }
@@ -242,6 +249,10 @@
       </select>
       <small>times Muse checks its work against your photos</small>
     </label>
+    <label class="moves" id="parts-row" title="SAM 3.1 finds each part (a teddy's head, arms and legs; a chair's backrest, seat and armrests) in every photo, and the model is fitted to them: a soft thing becomes smooth rounded parts (and you get a version that moves), a made thing keeps Muse's design, fitted to your photos. About 1 US cent a photo in SAM calls.">
+      <input type="checkbox" id="find-parts"> Find its parts
+      <small>SAM 3.1 finds every part in every photo (~1¢ a photo)</small>
+    </label>
     <button class="make" id="make" disabled>Make it 3D</button>
     <div class="progress" id="progress">
       <div class="bar" id="bar"><i></i></div>
@@ -296,6 +307,11 @@
     <div class="story-body">
       <ol class="flow" id="s-flow"></ol>
       <aside class="story-detail" id="s-detail"></aside>
+    </div>
+    <div class="story-seen" id="s-seen" hidden>
+      <h3>What the models saw</h3>
+      <p>SAM 3.1's outline of it in each photo, the parts it found, and the finished model over the photo: purple where they agree, red where the model is and the photo isn't, blue the other way round.</p>
+      <div class="seen-grid" id="s-seen-grid"></div>
     </div>
   </section>
   <div class="tools" id="tools" style="display:none">
@@ -506,6 +522,7 @@ function setKind(k) {
   $('#howto').textContent = HOW[k][0];
   $('#what').placeholder = HOW[k][1];
   $('#moves-row').style.display = k === 'object' ? '' : 'none';
+  $('#parts-row').style.display = k === 'object' ? '' : 'none';
   if (typeof drawRing === 'function') drawRing();
   $('#what-h').firstChild.textContent = k === 'object' ? '2 · What is it? ' : '2 · What is it called? ';
 }
@@ -536,7 +553,7 @@ $('#make').onclick = async () => {
   try {
     const names = photos.map(p => p.name);  // (already sent; the front first)
     await call('/make', { method: 'POST', body: JSON.stringify({ job, photos: names, kind, moves: +$('#moves').value,
-      views: viewsToSend(), what: $('#what').value, notes: $('#notes').value }) });
+      views: viewsToSend(), what: $('#what').value, notes: $('#notes').value, find_parts: $('#find-parts').checked }) });
     await watch(job);
   } catch (e) {
     $('#err').textContent = e.message;
@@ -721,6 +738,11 @@ const WHO_COLOUR = { 'SAM 3.1': 'var(--c-sam)', 'Muse Spark Open': 'var(--c-muse
                      'Muse Spark (Meta API)': 'var(--c-muse)' };
 const colourOf = who => WHO_COLOUR[who] || 'var(--c-geo)';
 const ABOUT = [  // (what a step does, in plain words: matched on its text)
+  [/names its parts/, "Naming its parts", "Muse looks at the front photo and names the parts that stick out from the main body: a head, arms, legs, ears. It's asked three times, and a name is used only if most answers give it."],
+  [/is finding its/, "Finding its parts", "SAM 3.1 finds each part in every photo, by the everyday names Muse gave them. See the coloured pictures under What the models saw."],
+  [/smooth parts/, "Smooth parts", "Each part becomes a smooth rounded shape. All of them are moved, sized and turned until together they match every photo's outline, and each matches SAM's outline for that part. Then they're blended into one skin. Where no photo looked, you get a rounded part instead of a flat cut. It's kept only if it still matches the photos nearly as well as the carving."],
+  [/from its outline in/, "Building it from its outline", "It's flat and standing up, so it's built from SAM's exact outline in the photo that faces it: solid, Muse's depth deep, holes and all, and painted from the photo cell by cell. Then SAM finds its buttons and knobs, and each is raised from the face in its own colour."],
+  [/to the photos, and the cameras/, "Fitting the design to the photos", "Muse's design is kept whole and fitted to the parts SAM found: first all of it, then each assembly (the base slides and spins on the floor, a backrest may lean, a seat stays level). Then the cameras are fitted to the model and the model to the cameras, twice."],
   [/photos ready/, 'Reading the photos', 'Each photo\'s GPS, compass and lens width are read from the photo itself, it\'s turned upright, and a smaller copy is made for the models. No AI: the phone already knows this.'],
   [/researching/, 'Researching it', 'Muse looks at the front photo and works out what it is, how things like it are made, how big they really are, and how it sits. It\'s asked three times and the most common answer wins, so one odd answer can\'t throw it.'],
   [/is finding/, 'Finding it', 'SAM 3.1 is given the object\'s name and finds it in the front photo. If that name finds nothing, it tries the other names Muse suggested.'],
@@ -752,6 +774,23 @@ function openStory(t) {
     return { ...s, took: Math.max(0, (next?.t ?? total) - s.t) };
   });
   $('#s-name').textContent = t.name;
+  const SEEN = { outline: "SAM 3.1's outline", parts: "SAM 3.1's parts", fit: 'the model over it' };
+  const grid = $('#s-seen-grid');
+  grid.innerHTML = '';
+  (t.seen || []).forEach(n => {
+    const [photo, what] = [n.slice(0, n.lastIndexOf('_')), n.slice(n.lastIndexOf('_') + 1, -4)];
+    const fig = document.createElement('figure');
+    const img = document.createElement('img');
+    img.src = `/seen?id=${encodeURIComponent(t.id)}&name=${encodeURIComponent(n)}`;
+    img.alt = `${SEEN[what] || what}, ${photo}`;
+    img.loading = 'lazy';
+    img.onclick = () => window.open(img.src, '_blank');
+    const cap = document.createElement('figcaption');
+    cap.textContent = `${photo} · ${SEEN[what] || what}`;
+    fig.append(img, cap);
+    grid.appendChild(fig);
+  });
+  $('#s-seen').hidden = !(t.seen || []).length;
   const cost = t.cost ? ` · ${(t.cost.meta_usd * 100).toFixed(2)}¢ of Meta credits` : '';
   $('#s-sub').textContent = `${steps.length} steps · ${secs(total)}${cost} · from ${t.photos} photo${t.photos === 1 ? '' : 's'}`;
   // where the time went, by who did the work

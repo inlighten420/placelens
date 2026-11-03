@@ -20,6 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .seen import listed as seen_listed  # (what each make's models saw, for the page)
+
 PHOTO_TYPES = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp")
 MAX_PHOTO = 40 * 1024 * 1024  # bytes: a phone photo is a few MB
 MAX_PHOTOS = 16
@@ -50,6 +52,7 @@ def _safe(name: str) -> str:
     """A photo's file name with nothing that could leave its folder."""
     name = Path(name.replace("\\", "/")).name
     return re.sub(r"[^A-Za-z0-9._ -]", "_", name)[:80] or "photo.jpg"
+
 
 
 class Studio:
@@ -105,7 +108,7 @@ class Studio:
             out.append({"name": path.name, "heading": None if heading is None else round(float(heading), 1)})
         return out
     def make(self, job: str, order: list[str], what: str, notes: str, kind: str = "object", moves: int = 3,
-             views: dict | None = None) -> None:
+             views: dict | None = None, find_parts: bool = False) -> None:
         """`kind`: "object" (`placelens object`) or "building" (`placelens build`: GPS, compass and the map)."""
         if kind not in ("object", "building"):
             raise ValueError("an object or a building")
@@ -133,6 +136,8 @@ class Studio:
                          if v == "above" or isinstance(v, (int, float)) and not isinstance(v, bool)}
                 if clean:
                     cmd += ["--views", json.dumps(clean)]
+                if find_parts:
+                    cmd += ["--find-parts"]
             env = {**os.environ, "PLACELENS_PROGRESS": str(progress), "PYTHONIOENCODING": "utf-8"}
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=os.getcwd(),
                                     text=True, encoding="utf-8", errors="replace")
@@ -140,7 +145,7 @@ class Studio:
                               "kind": kind, "what": what.strip()[:120]}
             (folder / "request.json").write_text(json.dumps({"photos": [p.name for p in photos], "kind": kind,
                                                              "what": what, "notes": notes, "moves": moves,
-                                                             "views": views}),
+                                                             "views": views, "find_parts": find_parts}),
                                                        encoding="utf-8")
         threading.Thread(target=self._wait, args=(job,), daemon=True).start()
 
@@ -206,7 +211,7 @@ class Studio:
             names.sort(key=lambda n: Path(n).stem != front)
             r = {"photos": names, "kind": "building" if rel[2] == "build" else "object", "what": "", "notes": ""}
         self.make(job, r["photos"], r.get("what", ""), r.get("notes", ""), r.get("kind", "object"),
-                  moves if moves is not None else r.get("moves", 3), r.get("views"))
+                  moves if moves is not None else r.get("moves", 3), r.get("views"), bool(r.get("find_parts")))
         return job
 
     def stop(self) -> None:
@@ -248,7 +253,7 @@ class Studio:
                               "size_m": made.get("size_m"), "shape": made.get("shape"),
                               "photos": len(made.get("photos_used", [])), "notes": made.get("notes", []),
                               "warnings": made.get("warnings", []), "time": model.stat().st_mtime,
-                              **self._timing(meta.parent)})
+                              "seen": seen_listed(meta.parent), **self._timing(meta.parent)})
             except (OSError, ValueError, KeyError, TypeError):
                 continue
         for model in self.out.rglob("building.glb"):
@@ -269,6 +274,14 @@ class Studio:
         for t in found:  # (the studio keeps a make's photos, so it can make it again)
             t["remake"] = t["id"].startswith("studio/")
         return sorted(found, key=lambda t: -t["time"])[:SHOWN]
+
+    def seen(self, id_: str, name: str) -> Path:
+        """One of a make's pictures of what the models saw (seen.py), by the model's id and the picture's name."""
+        folder = self.model(id_).parent / "seen"
+        path = (folder / _safe(name)).resolve()
+        if path.suffix != ".jpg" or not path.is_relative_to(folder.resolve()) or not path.is_file():
+            raise ValueError("no such picture")
+        return path
 
     def model(self, id_: str) -> Path:
         path = (self.out / id_).resolve()
@@ -544,6 +557,8 @@ def _handler(studio: Studio, page: bytes):
                     self._json(studio.status(q.get("job", "")))
                 elif url.path == "/thumb":
                     self._send(studio.thumb(q.get("job", ""), q.get("name", "")).read_bytes(), "image/jpeg")
+                elif url.path == "/seen":
+                    self._send(studio.seen(q.get("id", ""), q.get("name", "")).read_bytes(), "image/jpeg")
                 elif url.path == "/model":
                     self._send(studio.model(q.get("id", "")).read_bytes(), "model/gltf-binary")
                 elif url.path == "/download":
@@ -583,7 +598,8 @@ def _handler(studio: Studio, page: bytes):
                     ask = json.loads(body or b"{}")
                     studio.make(ask.get("job", ""), list(ask.get("photos", [])), str(ask.get("what", "")),
                                 str(ask.get("notes", "")), str(ask.get("kind", "object")), int(ask.get("moves", 3)),
-                                ask.get("views") if isinstance(ask.get("views"), dict) else None)
+                                ask.get("views") if isinstance(ask.get("views"), dict) else None,
+                                ask.get("find_parts") is True)
                     self._json({"ok": True})
                 elif url.path == "/keys":
                     save_keys(json.loads(body or b"{}"))

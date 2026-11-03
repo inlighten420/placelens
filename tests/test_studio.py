@@ -181,11 +181,11 @@ def test_remake_uses_the_same_photos_front_first(tmp_path, monkeypatch):
     asked = []
     monkeypatch.setattr(s, "make", lambda *a: asked.append(a))
     assert s.remake("studio/job03/objects/IMG_0202/prop.glb") == "job03"
-    assert asked[-1] == ("job03", ["IMG_0202.HEIC", "IMG_0201.HEIC", "IMG_0204.HEIC"], "", "", "object", 3, None)
+    assert asked[-1] == ("job03", ["IMG_0202.HEIC", "IMG_0201.HEIC", "IMG_0204.HEIC"], "", "", "object", 3, None, False)
     (out / "studio" / "job03" / "request.json").write_text(json.dumps(
-        {"photos": ["IMG_0204.HEIC"], "kind": "object", "what": "skull", "notes": "n"}))
+        {"photos": ["IMG_0204.HEIC"], "kind": "object", "what": "skull", "notes": "n", "find_parts": True}))
     s.remake("studio/job03/objects/IMG_0202/prop.glb", moves=5)
-    assert asked[-1] == ("job03", ["IMG_0204.HEIC"], "skull", "n", "object", 5, None)
+    assert asked[-1] == ("job03", ["IMG_0204.HEIC"], "skull", "n", "object", 5, None, True)  # smooth parts again
     with pytest.raises(ValueError):
         s.remake("objects/IMG_9/prop.glb")
     flags = {t["id"].split("/")[0]: t["remake"] for t in s.things()}
@@ -281,6 +281,44 @@ def test_examples_are_copied_once_and_listed(tmp_path):
 
 def test_the_shipped_examples_have_no_photos_or_places():
     for folder in (p for p in EXAMPLES.iterdir() if p.is_dir()):
-        assert sorted(f.name for f in folder.iterdir()) == ["object.json", "prop.glb", "view.html"]
+        names = {f.name for f in folder.iterdir()}
+        assert {"object.json", "prop.glb", "view.html"} <= names <= {"object.json", "prop.glb", "prop_moving.glb",
+                                                                    "view.html"}  # (models only: no photos)
         made = json.loads((folder / "object.json").read_text(encoding="utf-8"))
         assert made["location"] is None and made["example"] is True
+        assert all(p.startswith("photo ") for p in made["photos_used"])  # (no photo's own name)
+        assert (made.get("moving") is not None) == ("prop_moving.glb" in names)
+
+
+def test_what_the_models_saw_is_listed_and_served_and_nothing_else(tmp_path):
+    out = tmp_path / "out"
+    folder = _made(out, "studio", "job04", "objects", "IMG_1")
+    (folder / "seen").mkdir()
+    for n in ("IMG_1_fit.jpg", "IMG_1_outline.jpg", "IMG_1_parts.jpg"):
+        (folder / "seen" / n).write_bytes(b"\xff\xd8" + n.encode())
+    (folder / "secret.txt").write_text("not a picture")
+    s = Studio(out)
+    thing = next(t for t in s.things() if t["id"].endswith("IMG_1/prop.glb"))
+    assert thing["seen"] == ["IMG_1_outline.jpg", "IMG_1_parts.jpg", "IMG_1_fit.jpg"]  # outline, parts, then fit
+    assert s.seen(thing["id"], "IMG_1_parts.jpg").read_bytes().endswith(b"IMG_1_parts.jpg")
+    for bad in ("../secret.txt", "..\object.json", "nope.jpg"):
+        with pytest.raises(ValueError):
+            s.seen(thing["id"], bad)
+
+
+def test_the_page_script_parses(tmp_path):
+    """One stray quote in the page's script stops every button on it (3 Nov), and no other test runs the page."""
+    import re
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node isn't installed")
+    from pathlib import Path
+
+    page = (Path(__file__).parent.parent / "src" / "placelens" / "studio.html").read_text(encoding="utf-8")
+    script = tmp_path / "page.js"
+    script.write_text("\n".join(re.findall(r"<script>(.*?)</script>", page, re.S)), encoding="utf-8")
+    done = subprocess.run([node, "--check", str(script)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr

@@ -2,11 +2,11 @@
  "name": "large blue plush teddy bear",
  "model": "prop.glb",
  "size_m": [
-  0.62,
-  0.55,
-  0.63
+  0.63,
+  0.59,
+  0.59
  ],
- "shape": "carved",
+ "shape": "smooth",
  "location": null,
  "photos_used": [
   "photo 1",
@@ -17,8 +17,10 @@
   "photo 6"
  ],
  "notes": [
-  "An example made with PlaceLens from 6 phone photos (not included): 1 min 27 s, 1.5\u00a2 on the Meta API and 8 Muse Spark Open calls (49k tokens) on Baseten."
+  "An example made with PlaceLens from 6 phone photos (not included), with Find its parts on.",
+  "SAM 3.1 found its head, arms, legs and ear in every photo; each became a smooth rounded part, fitted to every photo and blended into one skin. prop_moving.glb has the same parts on joints with an idle loop."
  ],
  "warnings": [],
- "example": true
+ "example": true,
+ "moving": "prop_moving.glb"
 }

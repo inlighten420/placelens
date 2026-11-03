@@ -412,8 +412,13 @@ def _built(poly: Polygon, height: float, photos: dict[int, WallPhoto], roof, loo
     return parts
 
 
-def write_glb(path: Path, parts: list[Part], name: str = "building") -> Path:
-    """A self-contained glTF 2.0 binary: one mesh, one primitive and one material per part."""
+def write_glb(path: Path, parts: list[Part], name: str = "building",
+              joints: list[tuple[int | None, list[float]]] | None = None,
+              animation: tuple[np.ndarray, dict[int, np.ndarray]] | None = None) -> Path:
+    """A self-contained glTF 2.0 binary: one mesh, one primitive and one material per part. With `joints` (per part:
+    its parent part, or None, and where its joint sits from its parent's, in metres), each part is its own node on
+    its joint instead, its positions about that joint; `animation` (times in seconds, and per part its rotations
+    as x, y, z, w quaternions at those times) turns them, as a looping clip called "idle"."""
     blob = bytearray()
     views, accessors, primitives, materials, images, textures = [], [], [], [], [], []
 
@@ -467,6 +472,29 @@ def write_glb(path: Path, parts: list[Part], name: str = "building") -> Path:
         "bufferViews": views,
         "accessors": accessors,
     }
+    if joints is not None:  # a node per part on its joint, children under their parents
+        nodes = []
+        for i, (part, (_, offset)) in enumerate(zip(parts, joints, strict=True)):
+            node = {"name": part.name, "mesh": i, "translation": [float(v) for v in offset]}
+            children = [j for j, (parent, _) in enumerate(joints) if parent == i]
+            if children:
+                node["children"] = children
+            nodes.append(node)
+        gltf["nodes"] = nodes
+        gltf["meshes"] = [{"name": p.name, "primitives": [prim]} for p, prim in zip(parts, primitives, strict=True)]
+        gltf["scenes"] = [{"nodes": [i for i, (parent, _) in enumerate(joints) if parent is None]}]
+    if joints is not None and animation is not None and animation[1]:
+        times, turns = animation
+        when = add(np.asarray(times, np.float32).reshape(-1, 1), "SCALAR", 0)
+        accessors[when].update(min=[float(np.min(times))], max=[float(np.max(times))])
+        samplers, channels = [], []
+        for i, quats in turns.items():
+            samplers.append({"input": when, "output": add(np.asarray(quats, np.float32), "VEC4", 0),
+                             "interpolation": "LINEAR"})
+            channels.append({"sampler": len(samplers) - 1, "target": {"node": int(i), "path": "rotation"}})
+        gltf["animations"] = [{"name": "idle", "samplers": samplers, "channels": channels}]
+        gltf["bufferViews"], gltf["accessors"] = views, accessors
+        gltf["buffers"] = [{"byteLength": len(blob)}]
     if textures:  # smooth, and clamped at the wall's edges
         gltf.update(images=images, textures=textures,
                     samplers=[{"magFilter": 9729, "minFilter": 9729, "wrapS": 33071, "wrapT": 33071}])

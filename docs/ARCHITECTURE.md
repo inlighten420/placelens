@@ -73,7 +73,7 @@ flowchart LR
 
     subgraph Core["Pipelines"]
         B["Buildings<br/>triangulate, lock camera,<br/>extrude, roof, openings,<br/>critique loop"]
-        O["Objects<br/>research, cut out, place cameras,<br/>carve / fit parts / lathe,<br/>self-check loop"]
+        O["Objects<br/>research, cut out, place cameras,<br/>carve; with Find its parts: clean shapes,<br/>a fitted design, or built from the outline"]
     end
 
     subgraph AI["Meta models (meta.py)"]
@@ -245,10 +245,13 @@ flowchart TD
     K -- "1–2" --> I["Muse Image draws the unseen sides;<br/>Muse + SAM check each drawing"]
     K -- "1, round" --> T["Lathe: revolve the outline"]
     I --> C
+    K -- "3+, flat and upright,<br/>Find its parts" --> FL["Built from its exact outline;<br/>painted from front and back photos;<br/>buttons and knobs raised"]
     C --> F{"Hard, made thing<br/>with see-through gaps?"}
-    F -- yes --> FP["Muse lists parts at real size;<br/>parts fitted into the carving;<br/>self-check loop (§6)"]
-    F -- no --> P["Painted from the photos<br/>(most head-on view per vertex)"]
-    FP & P & T --> G["glTF + size sanity check;<br/>on the map if ≥ 1 m"]
+    F -- yes --> FP["Muse lists parts at real size; with Find its parts,<br/>fitted to SAM's part outlines in every photo;<br/>else fitted into the carving + self-check (§6)"]
+    F -- no --> SO{"Find its parts?<br/>(--find-parts)"}
+    SO -- yes --> SP["Muse names its parts; SAM finds each in<br/>every photo; each piece a clean shape<br/>the photos earn, or carved; on joints too"]
+    SO -- no --> P["Painted from the photos<br/>(most head-on view per vertex)"]
+    SP & FP & P & T & FL --> G["glTF + size sanity check;<br/>on the map if ≥ 1 m"]
 ```
 
 **Research first, one question** ([`objects.py`](../src/placelens/objects.py)). Before anything is built, Muse Spark
@@ -323,12 +326,52 @@ $M$, averaged over the photos:
 \text{score} = \frac{1}{n}\sum_{i=1}^{n} \text{IoU}(S_i, M_i)
 ```
 
-**One or two photos.** Two silhouettes crossed carve a block, so instead **Muse Image draws the missing standard
-sides** (back, left, right). It doesn't always draw what was asked, so **Muse Spark looks at each drawing next to
+**One or two photos.** These are the only makes where a photo goes on as a picture (a cut-out, or wrapped on a
+lathe): building needs a walk round. The make says so in its warnings, and tells you to take 3 or more.
+Two silhouettes crossed carve a block, so instead **Muse Image draws the missing standard sides** (back, left, right). It doesn't always draw what was asked, so **Muse Spark looks at each drawing next to
 the photo and names the side it shows**, and **SAM must find the object in it** (a drawing of the wrong side, or
 one SAM can't find, is dropped). The drawings that pass carve gently: their outlines are widened by 3% and they only
 paint what no real photo sees. A round thing (a pot, a tank) skips this and is **turned on a lathe** from its one
 outline ([`prop.py`](../src/placelens/prop.py)).
+
+**Made things, with Find its parts** ([`align.py`](../src/placelens/align.py), the same opt-in). Muse Spark
+Open describes a made thing well as shapes: the office chair as a backrest, a seat, armrests on struts, a gas lift and
+a five-star base on casters. Fitting that design into the carving (below) wrecked it, because a chair's carving is a
+blob: thin legs and gaps can't be carved, so the legs were thrown out and the rest squashed. SAM 3.1's outline of the
+chair, though, is exact, casters included. So with Find its parts the design is fitted to the photos instead:
+
+1. Muse names each shape with the everyday word for it ("backrest", "armrest", "leg", "handle"), so SAM 3.1 can
+   find it. SAM is asked for the six biggest kinds in every photo. Whatever is inside the outline but none of those
+   is the rest (a chair's gas lift and struts), and the parts SAM couldn't find are fitted to it, the way a teddy's
+   body is what's left of its cut-out.
+2. The whole design moves, turns and scales to match every photo's outline, and each found kind its own masks.
+3. Then each assembly moves on its own. An assembly is a found kind with the parts SAM can't see riding along (struts
+   with their armrest), and what stands on the floor forms one more group that slides and spins on the floor.
+   Something standing up (a backrest) may lean; something flat (a seat) stays level.
+4. The cameras are fitted again to the model, then the model to the cameras, twice. The office chair's photo from
+   above, whose turn the carving had put 45° out, gets a full turn round first.
+
+Each kind SAM found takes the photos' median colour inside its masks. On the office chair (3 Nov), the outline matched
+the photos 67% against 52% as Muse designed it, with the star base, casters and armrests where they are; the design
+fitted to the carving had lost them. If SAM finds none of the kinds in two photos, nothing pins the design, and it's
+fitted the old way: the standing steering wheel's faceplate and grips weren't found, so it was.
+
+**Flat things, with Find its parts** ([`flat.py`](../src/placelens/flat.py)). When the research says a thing is
+flat and standing up (a steering wheel, a sign, a shield), it isn't carved or designed from boxes. Walked round edge
+on, a flat thing carves to a slab, and boxes miss its outline; SAM 3.1's outline in the photo that faces it most
+squarely (the widest outline for its height) is exact, holes and all. So it's built from that outline, as geometry:
+the face on a grid of cells about 2.5 mm across, each a solid column Muse's depth deep, with walls round every edge,
+the hand holes' too. Each cell is painted from the photo, as a carving is: colour on the 3D surface, not a picture
+laid over it. Its back is painted the same way from the photo taken from behind, mirrored (from behind, left and
+right swap) and lined up with the same outline. SAM 3.1 then finds its buttons and knobs on that face, and each becomes its own raised cylinder at its
+place and size, in its own colour. The standing steering wheel was a black slab from both carving and boxes (3 Nov);
+built this way it has its wings, grips, hand holes, coloured ring and 15 raised buttons and knobs, for two SAM calls.
+(It was first given its photo as a picture on a slab, which looked right and was the wrong idea: built, not pasted.)
+
+**What the models saw** ([`seen.py`](../src/placelens/seen.py)). Every make keeps small pictures in its `seen/`
+folder: SAM 3.1's outline in each photo (yellow), and with Find its parts, the parts it found in colour and the
+finished model over the photo (purple where they agree, red where the model is and the photo isn't, blue the other
+way round). The studio shows them under **How it was made**.
 
 **Parts for hard, made things** ([`parts.py`](../src/placelens/parts.py), [`fit.py`](../src/placelens/fit.py)).
 Carving can't make a flat seat or open a gap that no outline shows: an office chair came out lumpy. For things
@@ -338,6 +381,71 @@ format. Then [`fit.py`](../src/placelens/fit.py) slides, scales and rotates the 
 inside the carving and fill it, scored on how much of each part is inside the carving and how much of the carving
 they fill. Twin parts (left/right armrests) and sets (five chair legs) are kept consistent. Each part takes the
 photos' colour where it sits. Then the self-check loop corrects it (§6).
+
+**Smooth parts for soft things** ([`soft.py`](../src/placelens/soft.py), opt-in: `--find-parts`, or **Find its
+parts** in the studio). Carving keeps everything inside every photo's outline, so where no photo looked it leaves flat slabs and
+wedges: a teddy seen from between two of its photos is all facets. But soft things are made of stuffed, rounded
+parts, and that is the knowledge that fills the gaps:
+
+1. Muse Spark Open names the parts that stick out from the main body (3 votes; a name is used if most give it): for
+   the teddy, `head`, `arm`, `leg`, `ear`.
+2. SAM 3.1 finds every match for each name in every photo. Each photo becomes a label map: body (what's left of the
+   cut-out) and each part, the smaller mask winning where two overlap.
+3. The photos vote on each surface voxel of the carving: a point z-buffer finds which voxels each photo actually
+   sees, and they vote with the label at their pixel. "Body" counts half, because it's what SAM didn't name, so a
+   leg SAM missed in two photos stays a leg. The inside takes the nearest surface's label, then a 3×3×3 majority
+   smooths it. Connected pieces are split out (two arms), and a piece much smaller than the biggest of its kind
+   joins what it touches (a sliver of shoulder a side photo saw over the arm).
+4. Each piece becomes an ellipsoid with the same middle and spread as its voxels. All of them are then fitted
+   together: each part's centre, radii and turn are stepped in turn, with steps halving each pass, keeping a step only
+   if the score rises. The score is the whole model's outline against every photo's cut-out, plus 0.3 × each part's
+   outline against SAM's mask for that part.
+5. The parts are blended with a smooth union and meshed from the continuous field, so there are no voxel steps. Then
+   it's painted from the photos as before.
+
+Each ellipsoid's distance is Quilez's estimate (exact on the surface, smooth everywhere), and the blend is a
+log-sum-exp smooth minimum over a width $k$ of 1.5 voxels:
+
+```math
+d_i(\mathbf{p}) = \frac{k_0 (k_0 - 1)}{k_1},\quad
+k_0 = \left\lVert \frac{R_i^\top(\mathbf{p}-\mathbf{c}_i)}{\mathbf{r}_i} \right\rVert,\quad
+k_1 = \left\lVert \frac{R_i^\top(\mathbf{p}-\mathbf{c}_i)}{\mathbf{r}_i^2} \right\rVert, \qquad
+d(\mathbf{p}) = -k \log \sum_i e^{-d_i(\mathbf{p})/k}
+```
+
+The prior only fills what the photos leave open. On the teddy (3 Nov), each photo in turn was left out of the whole
+make (camera fitting, carving and part fitting). The model was then seen from that photo's camera and predicted it as
+well as the carving did: outline IoU 0.744 against 0.747, colour ΔE 16.7 against 16.5. From every angle no photo
+took, it looks like a teddy instead of a stack of slabs.
+
+**Piece by piece: a clean shape where the photos earn one.** Not every piece is rounded: an aloe's pot is a tapered
+cylinder, and its leaves are spikes no simple shape can be. So each piece (or the whole thing, when Muse names no
+parts: a box, a tin) starts carved, and, biggest first, tries four shapes: rounded (an ellipsoid), a cylinder, a
+taper (a cylinder wider at one end: pots, cups, buckets) and a box. Each is started from the piece's own voxels and
+fitted to the photos. One is kept only if all of these hold:
+
+- The whole thing still matches the photos within 0.03 of the piece carved, and the piece matches its own outline
+  (SAM's mask for it, or what's left for the body) within 0.03. Thin spikes barely change the whole outline but are
+  most of a leaf's own.
+- The piece fills at least 55% of its own convex hull (its *solidity*): a clean shape has no dents or spikes. The
+  aloe's leaves fill 49%, its pot 82%; the teddy's body 59%, its head 88%. That margin is narrow, and is watched.
+- A flat face or a sharp edge is earned. Shapes within 0.01 of the best count as a tie, and a tie goes to the
+  roundest. The teddy's body scored 0.945 rounded and 0.947 as a cylinder (noise: it came out a flat-bottomed
+  block); the aloe's pot 0.906 as a cylinder and 0.890 rounded (earned).
+- A piece standing on the floor stands upright: it only turns about the vertical. Without that, the aloe's pot
+  leaned 15° to make up for a camera Muse had put 90° out.
+
+Then the whole is kept only if it matches its own photos' outlines at most 0.08 worse than the carving. That check
+is lenient on purpose: the carving is built from those same photos and hugs every bump of them. On a photo left out
+of the make entirely, the teddy's parts were 0.04 behind on their own photos and tied; the aloe with a cylinder pot
+was 0.04 to 0.06 behind and ahead in every case (0.73 against 0.73, 0.69 against 0.67, 0.70 against 0.69). A wrong
+prior loses far more, and the thing keeps its carving: the skull, and the aloe from three photos, did.
+
+The same parts make a rig, `prop_moving.glb`. Each part is its own closed skin, grown one voxel into its parent so
+no gap opens when it turns, on a joint where it touches the piece it touches most (an ear goes on the head, not the
+body). An idle loop turns them: a part standing up from its joint (a head) turns about the vertical, a hanging one
+(an arm) sways across its own direction, a pair in turn, and a part resting on the ground carries the weight and
+stays still. Cost: one Spark Open question and about a US cent a photo in SAM calls (the teddy: 24 calls, $0.06).
 
 **Brands** ([`objects.py`](../src/placelens/objects.py) `_unbrand`). If the research says the object shows a brand,
 SAM is asked for `logo` and `brand name text`. Each mask is widened by 8 px and filled from the surrounding surface
@@ -389,6 +497,11 @@ kept on the model's say-so.
 - **Sides:** Muse's "this is the back" is discarded if the compass, however rough, points the opposite way
   ([`sides.py`](../src/placelens/sides.py)).
 - **Drawn sides:** a Muse Image drawing is used only if Muse names the side it shows and SAM finds the object in it.
+- **Clean shapes:** a piece becomes one only if the photos earn it (above), and the whole is kept only if its
+  outline matches the photos at most 0.08 worse than the carving's
+  ([`soft.py`](../src/placelens/soft.py)).
+- **A made thing's design:** fitted to the photos only if SAM 3.1 finds at least one kind of its parts in two photos,
+  else fitted the old way ([`align.py`](../src/placelens/align.py)).
 - **Parts:** if the parts' outline matches the photo less than 50%, Muse gets one correction attempt with both
   pictures. Failing that, the carving is used instead ([`parts.py`](../src/placelens/parts.py)).
 - **Building pick:** geometry and Muse must agree (§4).
@@ -423,7 +536,8 @@ no further input. The game's F7 panel runs this.
 **glTF binary** ([`build.py`](../src/placelens/build.py) `write_glb`). Written directly: no Blender, no three.js
 exporter, just `struct` and NumPy into a `.glb` with positions, normals, UVs, PBR materials and embedded textures.
 Metres, Y up. Buildings use X east and Z south with the origin at the footprint's centre at ground level. Props face
-+Z. It opens in Godot, Unity, Unreal, Blender and any browser.
++Z. It opens in Godot, Unity, Unreal, Blender and any browser. A rig (`prop_moving.glb`) has a node per part, each
+on its joint under its parent, and a looping `idle` animation of their rotations.
 
 **`view.html`** ([`viewer.py`](../src/placelens/viewer.py)). One self-contained file with the model embedded, which
 you can spin and zoom in a browser.
@@ -462,7 +576,10 @@ crash or a slow make never blocks the page. Progress comes from the same `progre
 - **Compass circle:** every photo is placed round the object by its EXIF heading (`/headings`); dragging one passes
   `--views` to override both the compass and Muse.
 - **How it was made:** a timeline parsed from the progress log. Each step shows which Meta model did it and how long
-  it took, alongside the cost from the usage logs.
+  it took, alongside the cost from the usage logs. Under it, **What the models saw**: the make's `seen/` pictures
+  (`/seen`, only `.jpg` files inside that make's folder).
+- **Find its parts:** a checkbox that passes `--find-parts` (§5): SAM 3.1 finds each part in every photo, about a
+  US cent a photo. Off by default, as it's paid.
 - **Remake:** the same photos again. Because every answer is cached (§3), this is fast and almost free.
 - **Keys:** pasted once, written to the local `.env` (gitignored), never sent anywhere but Meta and Baseten.
 - **Safety:** the server listens on localhost only and checks the `Host` header (against DNS rebinding). Every POST
@@ -485,7 +602,7 @@ crash or a slow make never blocks the page. Progress comes from the same `progre
 | 90 s timeout and retries on Baseten | `meta.py` | a stall costs 90 s, not 10 minutes |
 | `PLACELENS_META_OFF=1` | `meta.py` | provably free replays |
 
-Real makes in the studio cost between 0.25¢ and 8.5¢ in Meta API calls, plus 2–8 Muse Spark Open calls for an object and 127 for a 10-photo house. The table is in the [README](../README.md#results-and-cost).
+Real makes in the studio cost between 0.25¢ and 8.5¢ in Meta API calls, plus 2–8 Muse Spark Open calls for an object and 127 for a 10-photo house. Find its parts adds a SAM 3.1 call per part per photo: 1¢ for the aloe or the steering wheel, 6¢ for the teddy or the office chair, and one more Spark Open question. The tables are in the [README](../README.md#results-and-cost).
 
 Every failure is designed to lose one photo, not the make. A photo SAM can't cut out, whose compass disagrees, or
 whose line misses is left out **with a reason the person can act on**. Exit codes are machine-readable for agents:
@@ -494,7 +611,7 @@ not sure which building it is.
 
 ## 11. Testing
 
-159 tests in [`tests/`](../tests), **offline and keyless**: they run in about 20 s and in CI on every push
+174 tests in [`tests/`](../tests), **offline and keyless**: they run in about 20 s and in CI on every push
 ([`.github/workflows/test.yml`](../.github/workflows/test.yml), with `ruff` lint as well).
 
 - **API layer:** a real SAM 3.1 reply ([`tests/data/sam_city_hall.txt`](../tests/data/sam_city_hall.txt), of a
@@ -506,10 +623,18 @@ not sure which building it is.
 - **Model-answer parsing:** every parser is tested on messy real-world replies (prose round the JSON, missing
   fields, `<think>` blocks).
 - **Loops:** the critique and self-check loops are tested to keep only edits that improve the score.
+- **Find its parts, on objects whose answer is known:** a figure of balls rebuilt from smooth parts on joints (body,
+  head, both arms, named by side), and one that isn't made of parts keeping its carving; a tin can with no named parts
+  coming out a cylinder standing up; spiky pieces too thin for a clean shape; a shape fitted past the carving's box
+  meshed whole; a chair design drifted off its photos pulled back, its legs moved as one set, and a camera turned
+  wrong turned back by the model; a flat thing built from its outline with its hand hole open, painted not pasted,
+  its button raised in its own colour.
 - **Agent:** `Survey` takes its model, tool runner and photo describer as injected callables, so the whole loop is
   tested with scripted model replies: budgets, error handling, auto-packing, the "it's one object" mode.
 - **Studio:** a real server on a random port is tested for its Host and Origin checks; uploads, downloads, delete,
-  remake, Send to game and the "how it was made" timeline are tested against a temporary folder.
+  remake, Send to game and the "how it was made" timeline are tested against a temporary folder. The pictures of what
+  the models saw are served only from inside a make's own folder, and the page's script is syntax-checked with Node
+  (one stray quote stopped every button on it once).
 
 ## 12. What we tried and dropped
 
@@ -523,6 +648,12 @@ not sure which building it is.
 | SIFT plus essential-matrix camera recovery ([`solve.py`](../src/placelens/solve.py), [`scripts/match_probe.py`](../scripts/match_probe.py)) | Works with photos 30–45° apart and textured rooms; fails on fur and plain paint | Kept as an option on `prop --match`; compass + Muse + `fit_cameras` by default |
 | One SAM noun per object | SAM didn't know some things by their obvious name | Noun fallbacks, and Muse renames per photo |
 | The OpenAI client's default 600 s timeout | Hid a 257 s stall | 90 s plus retries |
+| Painting only from photos that can see each spot (a depth buffer per photo) | On the teddy, aloe and skull, a photo left out was matched no better (ΔE −2% to +1%): hidden spots taking the wrong colour wasn't what held colour back | Facing test only, as before |
+| Carving away spots two photos label as different parts (semantic space carving) | Removed 1.5% of the teddy and the scores didn't move: the photos rarely disagree about parts | The labels became smooth parts instead (§5) |
+| Fitting each phone's tilt and aim too | Looked like +8% on a photo left out, but that photo had helped place its own camera. Left out of the fitting entirely: +0.5% to +3%. On synthetic photos it found tilts that weren't there | Angle, height and distance only |
+| Mirrored photos as extra cameras for symmetric things | The skull +4% on a photo left out; the teddy's pose isn't symmetric enough to help; the aloe was rightly found not symmetric | Not yet a default |
+| Every piece of a soft thing as a rounded shape, kept or dropped as a whole | An aloe's spiky leaves became a blob and the whole was refused, so its pot stayed a lumpy carving | Each piece chooses its own shape, or stays carved (§5) |
+| A flat thing's faces as a relief: everything Muse names on each face raised, the paint softened | SAM found nothing named on the steering wheel's back photo (low and far off), even cropped to it; the softened face lost its light ring and its white buttons went grey | Fine paint, buttons and knobs raised (§5) |
 
 The first-generation object maker, `placelens prop`, is still in the CLI next to the current `placelens object`.
 It holds the experiments above that didn't become defaults: the Muse "judge" that trims pockets no photo sees into
@@ -551,13 +682,17 @@ and SIFT matching.
 | [`look.py`](../src/placelens/look.py) | 46 | Colours of walls, roof, frames, doors |
 | [`build.py`](../src/placelens/build.py) | 500 | Meshes (walls with real openings, roofs) and the glTF writer |
 | **Objects** | | |
-| [`objects.py`](../src/placelens/objects.py) | 914 | The object pipeline end to end |
+| [`objects.py`](../src/placelens/objects.py) | 970 | The object pipeline end to end |
 | [`carve.py`](../src/placelens/carve.py) | 384 | Visual hull, camera refinement, marching cubes, painting |
 | [`imagine.py`](../src/placelens/imagine.py) | 29 | Muse Image prompts for unseen sides |
 | [`parts.py`](../src/placelens/parts.py) | 264 | Muse's parts list → meshes; outline check |
 | [`fit.py`](../src/placelens/fit.py) | 334 | Parts fitted into the carving |
 | [`sight.py`](../src/placelens/sight.py) | 278 | Self-check loop scored by mean IoU |
 | [`prop.py`](../src/placelens/prop.py) | 239 | Extruded cut-outs, lathe, map placement |
+| [`soft.py`](../src/placelens/soft.py) | 607 | Clean shapes piece by piece (rounded, cylinder, taper, box), and the rig |
+| [`align.py`](../src/placelens/align.py) | 291 | Made things: Muse's design fitted to SAM's part outlines |
+| [`flat.py`](../src/placelens/flat.py) | 179 | Flat things built from their exact outline, controls raised |
+| [`seen.py`](../src/placelens/seen.py) | 91 | Pictures of what the models saw, per make |
 | [`judge.py`](../src/placelens/judge.py), [`dress.py`](../src/placelens/dress.py), [`solve.py`](../src/placelens/solve.py) | 984 | First-generation `prop` experiments (§12) |
 | **Orchestration and outputs** | | |
 | [`cli.py`](../src/placelens/cli.py) | 1,895 | Every command; `--json`; the building pipeline |

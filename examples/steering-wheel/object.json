@@ -2,11 +2,11 @@
  "name": "sim racing steering wheel",
  "model": "prop.glb",
  "size_m": [
-  0.26,
+  0.29,
   0.07,
-  0.12
+  0.15
  ],
- "shape": "parts",
+ "shape": "built",
  "location": null,
  "photos_used": [
   "photo 1",
@@ -15,8 +15,10 @@
   "photo 4"
  ],
  "notes": [
-  "An example made with PlaceLens from 4 phone photos (not included): 2 min 38 s, 4.5\u00a2 on the Meta API and 7 Muse Spark Open calls (35k tokens) on Baseten."
+  "An example made with PlaceLens from 4 phone photos (not included), with Find its parts on.",
+  "It's flat and standing up, so it was built from SAM 3.1's exact outline in the photo that faces it, painted from that photo and its back from the photo taken from behind; the buttons and knobs SAM found are raised from its faces. The brand was painted out."
  ],
  "warnings": [],
- "example": true
+ "example": true,
+ "moving": null
 }

@@ -1650,6 +1650,9 @@ def build_parser() -> argparse.ArgumentParser:
                                                              "can stand in for the other)")
     obj.add_argument("--notes", help="what you know that the photos can't show")
     obj.add_argument("--no-imagine", action="store_true", help="one photo: no Muse Image drawings of its other sides")
+    obj.add_argument("--find-parts", action="store_true", help="SAM 3.1 finds its parts in every photo (about 1 US "
+                     "cent a photo): a soft thing (a teddy) is rebuilt from smooth parts fitted to them, with "
+                     "prop_moving.glb on joints too; a made thing (a chair) has Muse's design fitted to them")
     obj.add_argument("--parts", action="store_true", help="build its own 3D version from shapes Muse describes "
                                                          "(no photo on it), checked against the photo")
     obj.add_argument("--moves", type=int, choices=range(0, 7), metavar="0-6",
@@ -1732,7 +1735,7 @@ def cmd_object(args) -> None:
         made = make_object(args.photo, out, meta, notes=args.notes, what=args.what, height=args.height,
                            width=args.width, round_=True if args.round else None, imagine=not args.no_imagine,
                            symmetric=True if args.symmetric else None, from_parts=args.parts,
-                           views=_views(args.views, args.json))
+                           views=_views(args.views, args.json), find_parts=args.find_parts)
     except ObjectFailed as e:
         _fail(str(e), args.json)
     result = {**made.as_dict(), "cost": usage_since(started), "seconds": round(time.time() - started)}
@@ -1749,6 +1752,8 @@ def cmd_object(args) -> None:
     print(f"where:    {where['lat']}, {where['lon']}, facing {where['facing_bearing']:.0f}°" if where
           else "where:    not on the map (small enough to carry, or no GPS/compass): it waits in your things")
     print(f"model:    {made.model}  (view: {out / 'view.html'})")
+    if made.moving:
+        print(f"moving:   {made.moving}  (on joints, with an idle loop)")
     c = result["cost"]
     print(f"cost:     ~${c['meta_usd']:.4f} paid Meta ({c['meta_calls']} calls); Spark Open {c['open_calls']} calls; "
           f"{result['seconds']} s")

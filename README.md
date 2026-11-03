@@ -43,7 +43,7 @@ flowchart LR
 | What is it, how big | One research question, asked 3–5 times in parallel and voted: what it is, how such things are made, real size, floors, roof, colours, brands | **Muse Spark Open** |
 | Which side each photo shows | Compass first; Muse checks it, and wins when the compass is clearly off (indoors) or the object was turned in place | **Muse Spark Open** |
 | Sides nobody photographed | Drawn from the one photo; each drawing is used only if Muse names the side it shows and SAM finds the object in it | **Muse Image** |
-| The shape | Buildings: footprint split into roof blocks, raised to height, real windows and doors cut through the walls. Soft objects: **visual hull** carved from the cut-outs (voxels + marching cubes). Hard, made things (a chair): Muse's parts **fitted into the carving**. Round things: turned on a lathe | |
+| The shape | Buildings: footprint split into roof blocks, raised to height, real windows and doors cut through the walls. Soft objects: **visual hull** carved from the cut-outs (voxels + marching cubes). Hard, made things (a chair): Muse's parts **fitted into the carving**. Opt-in, **Find its parts**: SAM 3.1 finds each part in every photo; soft things are rebuilt from **smooth parts** (and rigged to move), made things keep Muse's design, fitted to those outlines. Round things: turned on a lathe | |
 | Brands | Logos found and painted over before anything goes in a game | **SAM 3.1** |
 | The check | The model drawn over every photo from its own camera; Muse proposes fixes, and each is **kept only if the outline overlap improves across the photos** | **Muse Spark Open** |
 | The plan | An agent groups a folder of photos and runs the makers through **tool calls** | **Muse Spark Open** |
@@ -56,7 +56,7 @@ votes.
 
 | Model | API | Used for | Why |
 |---|---|---|---|
-| **SAM 3.1** (`sam-3.1`) | Meta Model API, `responses` (streamed, one-bit masks), decoded with Meta's `meta-sam-parser` | Masks from a noun: building, house, the object, window, door, garage door, logo | Exact outlines: the measurement that every other answer is checked against |
+| **SAM 3.1** (`sam-3.1`) | Meta Model API, `responses` (streamed, one-bit masks), decoded with Meta's `meta-sam-parser` | Masks from a noun: building, house, the object; with Find its parts, each of its parts (head, arm; backrest, armrest) and the buttons and knobs on a flat thing; window, door, garage door, logo | Exact outlines: the measurement that every other answer is checked against |
 | **Muse Spark Open** (`meta-models/muse-spark-open-1026`) | Baseten, OpenAI-compatible `chat/completions` with `reasoning_effort` and tool calls | All reasoning: research, sizes, distances, sides, roofs, colours, critiques, parts lists, the agent | Open weights, multi-image reasoning, tool calls; cheap enough to ask 3–5 times and take the median |
 | **Muse Spark** (`muse-spark-1.3`) | Meta Model API, `responses` | The same questions when there's no Baseten key; a second opinion on an unsure side | One key is enough to run PlaceLens |
 | **Muse Image** (`muse-image-1.0`) | Meta Model API, `images/edits` (multipart, reference photos) | The back and sides of an object from one photo | Keeps pose and colours. Its drawings are checked before they're used |
@@ -80,11 +80,16 @@ votes.
 - **A real agent with real guardrails.** The survey agent's tools are PlaceLens's own CLI commands run as
   subprocesses with `--json`. It has budgets for heavy calls, truncated tool results and a full transcript, and it
   asks the person only when it's unsure. [More](docs/ARCHITECTURE.md#7-the-survey-agent)
+- **Each thing built the way it's made** (Find its parts). SAM 3.1 finds each part in every photo, and each piece
+  becomes the clean shape the photos earn (rounded, a cylinder, a taper, a box) or stays carved; a made thing keeps
+  Muse's design, fitted to the parts; a flat thing is built from its exact outline. Kept only where a photo **left out
+  of the whole make** is predicted at least as well as by the carving. [More](docs/ARCHITECTURE.md#5-objects)
 - **Built, not pasted.** Buildings are built clean in the colours Muse reads, with real openings (reveals, frames,
-  glazing bars, sills), not a photo stretched over a box with trees and cars on it.
+  glazing bars, sills), not a photo stretched over a box with trees and cars on it. Objects are geometry painted from
+  the photos; a photo goes on as a picture only when there are just one or two of them, and the make says so.
 - **Standard outputs.** glTF binary written directly (no Blender), plus a place-pack manifest any engine can read,
   plus a Godot adapter that replaces the map's grey box. [More](docs/ARCHITECTURE.md#8-outputs-gltf-place-packs-the-godot-adapter)
-- **159 offline tests**, no keys needed, run in CI with lint on every push.
+- **174 offline tests**, no keys needed, run in CI with lint on every push.
 
 ## Try it
 
@@ -94,9 +99,11 @@ needs [Python 3.10+](https://www.python.org/downloads/)). Then PlaceLens Studio 
 API key once, drop in photos, press **Make it 3D**, and drag the model round to see every side. Everything runs on
 your own computer; the key is saved in `.env` in that folder.
 
-**See results before you make anything:** [`examples/`](examples) holds four things PlaceLens made: a sugar skull,
-an aloe plant, a teddy bear and a sim-racing steering wheel. Each one has its model (`prop.glb`) and a `view.html`
-you can double-click to spin it round in a browser, no key or install needed. The studio shows them the first time
+**See results before you make anything:** [`examples/`](examples) holds five things PlaceLens made with Find its
+parts: a teddy bear (smooth parts), an office chair (Muse's design, fitted), a sim-racing steering wheel (built from
+its outline), an aloe plant (a clean pot, carved leaves) and a sugar skull (carved). Each one has its model
+(`prop.glb`) and a `view.html` you can double-click to spin it round in a browser, no key or install needed; the teddy
+and the aloe also have `prop_moving.glb`, the same parts on joints. The studio shows them the first time
 it opens, so you can turn them round and send them to the game straight away. Only the finished models are
 included: the photos they were made from stay private.
 
@@ -106,7 +113,7 @@ included: the photos they were made from stay private.
 git clone https://github.com/inlighten420/placelens && cd placelens
 python -m venv .venv
 .venv/Scripts/pip install -e ".[dev]"        # .venv/bin/pip on macOS/Linux
-.venv/Scripts/python -m pytest -q            # 159 tests, offline, no keys needed
+.venv/Scripts/python -m pytest -q            # 174 tests, offline, no keys needed
 .venv/Scripts/activate                       # source .venv/bin/activate on macOS/Linux: puts `placelens` on the path
 ```
 
@@ -146,6 +153,12 @@ In the studio:
 - **How it was made** shows every step, which Meta model did it, and how long it took.
 - **Remake** makes a thing again from the same photos; saved answers make it quick and nearly free.
 - **Self-checks** sets how many times Muse looks at what it built and corrects it.
+- **Find its parts** has SAM 3.1 find each part in every photo, and fits the model to them: a soft thing (a teddy)
+  becomes smooth rounded parts instead of the flat cuts carving leaves where no photo looked, with a version that
+  moves; a plant's pot becomes a clean tapered cylinder while its leaves stay carved; a made thing (a chair) keeps
+  Muse's design, fitted to your photos; a flat thing (a steering wheel) is built from its exact outline, painted from
+  the photo, with its buttons and knobs raised in 3D. About a US cent a photo in SAM calls.
+- **How it was made** also shows what the models saw: SAM's outline, the parts it found, and the model over each photo.
 - **Send to game** puts it in Open-Planet in a few seconds.
 - **Download** gives you the `.glb` for any engine.
 
@@ -190,6 +203,17 @@ reasoning effort), because a single answer's distances and sides wobble. That's 
 and it's what makes the first build of a house slow. Every answer is saved, so making the same thing again costs
 almost nothing on either bill. This build was recorded before the roof questions ran in parallel.
 
+**Find its parts adds SAM 3.1 calls**, a quarter of a US cent each, and one more Spark Open question:
+
+| Thing | What it asks SAM 3.1 for | Extra SAM calls | Extra Meta API |
+|---|---|---|---|
+| Teddy bear | head, arm, leg, ear in 6 photos | 24 | 6¢ |
+| Office chair | its 6 biggest kinds of part in 4 photos | 24 | 6¢ |
+| Steering wheel | buttons and knobs, front and back | 4 | 1¢ |
+| Aloe plant | leaf in 4 photos | 4 | 1¢ |
+
+The fitting itself is NumPy on your computer: 10 seconds to 2 minutes.
+
 Baseten bills Spark Open by token. This project ran on the hackathon's Baseten credits, so check the Baseten
 dashboard (Usage) for the current price. Every call is logged locally: `out/meta_usage.jsonl` has each paid Meta
 call with its price, `out/open_usage.jsonl` has each Spark Open call with its tokens and seconds, and
@@ -218,21 +242,30 @@ src/placelens/        the package (one module per job; see the module map in doc
   meta.py, muse.py      Meta model client, cost log; cached, voted, parallel questions
   photo.py, footprints.py, osm.py, view.py          inputs: EXIF, map footprints, view cone
   pick.py, buildings.py, sides.py, front.py, roof.py, critique.py, look.py, build.py   buildings
-  objects.py, carve.py, imagine.py, parts.py, fit.py, sight.py, prop.py               objects
+  objects.py, carve.py, soft.py, align.py, flat.py, seen.py, imagine.py, parts.py, fit.py,
+  sight.py, prop.py                                                                   objects
   survey.py             the tool-calling agent
   studio.py, studio.html  the local web app
   pack.py, viewer.py    place packs, view.html
   cli.py                every command
 adapters/godot/       the Open-Planet add-on (installer + 4 GDScript files)
-tests/                159 offline tests (pytest), one file per module
+tests/                174 offline tests (pytest), one file per module
 scripts/              probes and evaluations used while building (see scripts/README.md)
 docs/                 ARCHITECTURE.md, and the day-one plan for comparison
-examples/             four finished models (prop.glb + view.html), shown in the studio on first start
+examples/             five finished models (prop.glb + view.html), shown in the studio on first start
 ```
 
 ## Honest limits
 
-- Thin parts (chair legs, armrests) are hard to see in photos; a chair comes out blocky.
+- Without Find its parts, thin parts (chair legs, armrests) are hard to carve; a chair comes out blocky. With it,
+  the chair keeps Muse's design, but its parts are simple boxes and cylinders.
+- One or two photos: the photo goes on as a picture (a cut-out, or wrapped on a lathe). Three photos leave flat sides
+  (the sugar skull): walk round with four or more.
+- Find its parts finds only what SAM 3.1 knows by name, in photos where the thing is big enough: the steering wheel's
+  back photo, taken low and far off, gave it no buttons to raise.
+- Find its parts' rules (how solid a piece must be for a clean shape, how close a flat face must come to win) were set
+  on a handful of objects; each falls back to carving when unsure, and each threshold is written down with the
+  numbers that set it.
 - A one-photo object looked down on from above can come out squat (the drawings are level).
 - Buildings follow the map's footprint; a wrong footprint gives a wrong shape. Tested mostly on one house.
 - Phone compasses are poor indoors and in narrow passages; Muse corrects objects (or drag them on the circle),

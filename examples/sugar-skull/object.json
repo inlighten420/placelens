@@ -14,8 +14,10 @@
   "photo 3"
  ],
  "notes": [
-  "An example made with PlaceLens from 3 phone photos (not included): 31 s, 0.25\u00a2 on the Meta API and 2 Muse Spark Open calls (13k tokens) on Baseten."
+  "An example made with PlaceLens from 3 phone photos (not included), with Find its parts on.",
+  "No clean shape matched it as well as the carving, so it's carved. Three photos leave its sides flat: four or more round them out."
  ],
  "warnings": [],
- "example": true
+ "example": true,
+ "moving": null
 }

@@ -23,6 +23,7 @@ import io
 import json
 import math
 import re
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -77,16 +78,18 @@ class Made:
     folder: Path
     model: Path
     size_m: list[float]  # wide, deep, tall
-    shape: str  # "carved", "round", "imagined", "cutout"
+    shape: str  # "carved", "smooth", "built", "round", "imagined", "cutout", "parts"
     location: dict | None
     photos_used: list[str]
     notes: list[str] = field(default_factory=list)  # one line per photo or step worth knowing
     warnings: list[str] = field(default_factory=list)  # what to do better next time
+    moving: Path | None = None  # the same model on its own joints with an idle loop (smooth parts only)
 
     def as_dict(self) -> dict:
         return {"name": self.name, "folder": str(self.folder), "model": str(self.model), "size_m": self.size_m,
                 "shape": self.shape, "location": self.location, "photos_used": self.photos_used,
-                "notes": self.notes, "warnings": self.warnings}
+                "notes": self.notes, "warnings": self.warnings,
+                "moving": str(self.moving) if self.moving else None}
 
 
 def spread(headings: list[float | None], keep: int = MAX_PHOTOS) -> list[int]:
@@ -111,17 +114,20 @@ def spread(headings: list[float | None], keep: int = MAX_PHOTOS) -> list[int]:
 def make_object(photos: list[str | Path], out: Path, meta, notes: str | None = None, what: str | None = None,
                 height: float | None = None, width: float | None = None, round_: bool | None = None,
                 imagine: bool = True, symmetric: bool | None = None, from_parts: bool = False,
-                views: dict[str, float | str] | None = None) -> Made:
+                views: dict[str, float | str] | None = None, find_parts: bool = False) -> Made:
     """The object in `photos` as a 3D model in `out`. `what`, `height`, `width`, `round_`: what the person said
     (else Muse decides). `views`: each photo's place round it, as the person arranged them (file name: degrees
-    round from the front, or "above"); the first photo is the front. `meta` is a MetaClient. Raises ObjectFailed
-    with a reason a person can act on."""
+    round from the front, or "above"); the first photo is the front. `find_parts`: SAM 3.1 finds its parts in every
+    photo, and a soft thing is rebuilt from smooth parts fitted to them (soft.py), a made thing has Muse's design
+    fitted to them (align.py); asked once per part per photo, so it's the person's choice. `meta` is a MetaClient.
+    Raises ObjectFailed with a reason a person can act on."""
     from .meta import OPEN
     from .muse import ask, merge_props, noted
     from .pick import prepare_photo
     from .prop import parse_prop
 
     out.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(out / "seen", ignore_errors=True)  # (this make's pictures of what the models saw, not a last one's)
     all_photos = [Path(p) for p in photos]
     if not all_photos:
         raise ObjectFailed("no photos")
@@ -231,7 +237,12 @@ def make_object(photos: list[str | Path], out: Path, meta, notes: str | None = N
         hidden = sum(_unbrand(meta, ph, out) for ph in cut_out)
         lines.append(f"brand names and logos painted over in {hidden} photo(s)" if hidden
                      else "it shows a brand, but SAM 3.1 couldn't find it to paint over")
-    built = None
+    from . import seen
+
+    for ph in cut_out:  # (SAM's outline in each photo, kept for "How it was made": after any brand is painted over)
+        with Image.open(ph.small) as img:
+            seen.outline(np.asarray(img.convert("RGB")), ph.mask, out / "seen" / f"{ph.path.stem}_outline.jpg")
+    built, moving = None, None
     if from_parts:  # its own 3D version from parts, not the photo on a shape (parts.py)
         from .parts import build_parts
 
@@ -275,19 +286,47 @@ def make_object(photos: list[str | Path], out: Path, meta, notes: str | None = N
         _place(meta, cut_out, out, views, answers if cut_out[0] is chosen[0] else None)
         lines += [f"{ph.path.name}: {ph.angle:+.0f}° round ({ph.how})" for ph in cut_out]
         lines += [f"{ph.path.name}: left out: {ph.note}" for ph in before if ph not in cut_out]
-        step(f"carving the {noun} from {len(cut_out)} cut-outs")
-        parts, grid = _carve(cut_out, (wide, deep, tall))
-        shape = "carved"
-        if found["holes"] is True and found["shape"] in MADE_SHAPES and not flat_from_above:
-            fitted, extra = _fit_parts(meta, front, name, found, (wide, deep, tall), parts[0], grid, out,
-                                          getattr(parts, "shots", None))
-            lines += extra
+        flat = find_parts and found["shape"] == "flat" and found["pose"] != "lying flat" and not flat_from_above
+        if flat:  # (a flat thing standing up, a steering wheel or a sign, is its outline made solid)
+            from .flat import built, squareness
+
+            face = max(cut_out, key=squareness)
+            step(f"building the {noun} from its outline in {face.path.name}, the photo that faces it")
+            parts, note = built(meta, cut_out, wide, deep, tall, out, step)
+            grid, shape = None, "built"
+            lines.append(note)
+        else:
+            step(f"carving the {noun} from {len(cut_out)} cut-outs")
+            parts, grid = _carve(cut_out, (wide, deep, tall))
+            shape = "carved"
+        if shape == "carved" and found["holes"] is True and found["shape"] in MADE_SHAPES and not flat_from_above:
+            fitted = None
+            if find_parts:
+                fitted, extra = _design_fitted(meta, front, name, found, (wide, deep, tall), cut_out, parts.shots,
+                                               out)
+                lines += extra
+            if fitted is None:
+                fitted, extra = _fit_parts(meta, front, name, found, (wide, deep, tall), parts[0], grid, out,
+                                           getattr(parts, "shots", None))
+                lines += extra
             if fitted:
                 parts, shape = fitted, "parts"
+        if find_parts and shape == "carved":  # (a flat thing's outline is already exact)
+            from .soft import soften, write_moving
+
+            rebuilt, extra = soften(meta, cut_out, parts.shots, grid, tall, out, step)
+            lines += extra
+            if rebuilt:
+                parts, shape = [rebuilt.part], "smooth"
+                if rebuilt.rig:  # (pieces on joints: a version that moves)
+                    moving = write_moving(out / "prop_moving.glb", rebuilt, name)
         every = np.concatenate([p.positions for p in parts])
         span = every.max(axis=0) - every.min(axis=0)
         size = (float(span[0]), float(span[2]), float(span[1]))
 
+    if shape in ("cutout", "round"):  # (the only times a photo goes on as a picture: built needs a walk round)
+        warnings.append(f"a photo is shown on it as a picture ({len(cut_out)} photo"
+                        f"{'s' if len(cut_out) > 1 else ''}): take {MIN_CARVE} or more round it for a built model")
     # The check: what was built against what the research said such a thing measures.
     biggest, expected = max(size), max(wide, deep, tall)
     if expected and not (1 / SIZE_OFF <= biggest / expected <= SIZE_OFF):
@@ -309,7 +348,7 @@ def make_object(photos: list[str | Path], out: Path, meta, notes: str | None = N
         lines.append(f"small enough to carry ({max(size):.2f} m): in your things to put where you like, not on the map")
     lines += [f"{n}: not needed (close to another photo's view)" for n in left_out]
     made = Made(name, out, model, [round(v, 2) for v in size], shape, location, [ph.path.name for ph in cut_out],
-                lines, warnings)
+                lines, warnings, moving)
     (out / "object.json").write_text(json.dumps(made.as_dict(), indent=1), encoding="utf-8")
     _place_file(made, out)
     return made
@@ -628,6 +667,23 @@ class _Carved(list):
 GOOD_PHOTOS = 0.5  # parts whose outline matches the photos' this well (intersection over union) are kept
 SIGHT_MOVES = 3  # Muse questions to correct the parts by looking at them over the photos (0: none)
 MADE_SHAPES = ("boxy", "flat")  # research shapes of hard, made things: built from parts fitted to the carving
+
+
+def _design_fitted(meta, front: Photo, name: str, found: dict, size, photos: list[Photo], shots, out: Path):
+    """A made thing with "Find its parts": Muse's design fitted to the parts SAM 3.1 finds in every photo
+    (align.py). The model parts, or None to fit it the old way, and notes."""
+    from .align import fit_design
+    from .parts import describe_parts, model_parts
+
+    about = f"{name}. {found['made_of'] or ''} Shape: {found['shape']}. It has openings you can see through."
+    design, _ = describe_parts(meta, front.small, about, size, False, out, step)
+    if not design:
+        return None, ["Muse didn't describe it as parts"]
+    shapes, notes = fit_design(meta, photos, shots, design, size[2], out, step)
+    if shapes is None:
+        return None, notes
+    (out / "parts.json").write_text(json.dumps(shapes, indent=1), encoding="utf-8")
+    return model_parts(shapes), notes
 
 
 def _fit_parts(meta, front: Photo, name: str, found: dict, size, carved, grid, out: Path, shots=None):
